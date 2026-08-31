@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cotizador de Auditorías PDV</title>
+<link rel="stylesheet" href="styles.css">
+<!-- Tipografías vía Google Fonts (opcional: si no hay conexión, se usan las fuentes de sistema definidas como fallback en styles.css) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<!-- jsPDF vía CDN, usado únicamente para exportar la cotización a PDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ====================== SIDEBAR / NAV ====================== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">PDV</div>
+      <div class="brand-text">
+        <strong>Cotizador</strong>
+        <span>Auditorías en punto de venta</span>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-btn is-active" data-view="nueva">
+        <span class="nav-icon">＋</span> Nueva cotización
+      </button>
+      <button class="nav-btn" data-view="historial">
+        <span class="nav-icon">≡</span> Historial
+      </button>
+      <button class="nav-btn" data-view="config">
+        <span class="nav-icon">⚙</span> Configuración de costos
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <span id="quote-number-preview">COT-2026-001</span>
+      <small>Próximo número de cotización</small>
+    </div>
+  </aside>
+
+  <!-- Botón hamburguesa para móvil -->
+  <button class="mobile-toggle" id="mobileToggle" aria-label="Abrir menú">☰</button>
+
+  <!-- ====================== MAIN CONTENT ====================== -->
+  <main class="main">
+
+    <!-- ---------- VISTA: NUEVA COTIZACIÓN ---------- -->
+    <section class="view is-active" id="view-nueva">
+      <header class="view-header">
+        <div>
+          <h1>Nueva cotización</h1>
+          <p class="subtitle">Completá los datos del cliente y del servicio para generar un costo estimado.</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-ghost" id="btnDuplicarActual" title="Duplicar la cotización actual del formulario">Duplicar</button>
+          <button class="btn btn-ghost" id="btnLimpiarForm">Limpiar formulario</button>
+        </div>
+      </header>
+
+      <form id="quoteForm" novalidate>
+
+        <div class="grid-2">
+          <!-- ---------- DATOS DEL CLIENTE ---------- -->
+          <fieldset class="card">
+            <legend>Datos del cliente</legend>
+
+            <div class="field">
+              <label for="clienteNombre">Nombre del cliente o empresa *</label>
+              <input type="text" id="clienteNombre" required placeholder="Ej: Supermercados Don Luis S.A.">
+            </div>
+
+            <div class="field">
+              <label for="clienteContacto">Nombre del contacto</label>
+              <input type="text" id="clienteContacto" placeholder="Ej: María Benítez">
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="fechaCotizacion">Fecha de cotización *</label>
+                <input type="date" id="fechaCotizacion" required>
+              </div>
+              <div class="field">
+                <label for="vigenciaDias">Vigencia (días) *</label>
+                <input type="number" id="vigenciaDias" min="1" value="15" required>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="nombreProyecto">Nombre del proyecto o campaña</label>
+              <input type="text" id="nombreProyecto" placeholder="Ej: Relevamiento Gaseosas Q3">
+            </div>
+
+            <div class="field">
+              <label for="observaciones">Observaciones</label>
+              <textarea id="observaciones" rows="3" placeholder="Notas internas o comentarios para el cliente"></textarea>
+            </div>
+          </fieldset>
+
+          <!-- ---------- DATOS DEL SERVICIO ---------- -->
+          <fieldset class="card">
+            <legend>Datos del servicio</legend>
+
+            <div class="field">
+              <label for="tipoServicio">Tipo de servicio *</label>
+              <select id="tipoServicio">
+                <option value="auditoria_pdv">Auditoría en punto de venta</option>
+              </select>
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="cantidadPDV">Cantidad de puntos de venta (PDV) *</label>
+                <input type="number" id="cantidadPDV" min="1" required placeholder="Ej: 20">
+              </div>
+              <div class="field">
+                <label for="productosPorPDV">Productos aprox. por PDV *</label>
+                <input type="number" id="productosPorPDV" min="1" required placeholder="Ej: 15">
+              </div>
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="visitasPorPDV">Visitas por PDV (por ronda) *</label>
+                <input type="number" id="visitasPorPDV" min="1" value="1" required>
+              </div>
+              <div class="field">
+                <label for="frecuencia">Frecuencia *</label>
+                <select id="frecuencia">
+                  <option value="unica">Única vez</option>
+                  <option value="semanal">Semanal</option>
+                  <option value="quincenal">Quincenal</option>
+                  <option value="mensual">Mensual</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field" id="duracionWrap">
+              <label for="duracionMeses">Duración del proyecto (meses) *</label>
+              <input type="number" id="duracionMeses" min="1" value="1" required>
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="zona">Zona *</label>
+                <select id="zona">
+                  <option value="asuncion">Asunción</option>
+                  <option value="gran_asuncion">Gran Asunción</option>
+                  <option value="interior">Interior</option>
+                </select>
+              </div>
+              <div class="field" id="deptoWrap" style="display:none;">
+                <label for="departamento">Departamento / Ciudad</label>
+                <input type="text" id="departamento" placeholder="Ej: Itapúa - Encarnación">
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Cantidad de auditores necesarios *</label>
+              <div class="inline-toggle">
+                <label class="pill">
+                  <input type="radio" name="modoAuditores" value="automatico" checked>
+                  Automático
+                </label>
+                <label class="pill">
+                  <input type="radio" name="modoAuditores" value="manual">
+                  Manual
+                </label>
+              </div>
+              <input type="number" id="cantidadAuditores" min="1" style="margin-top:8px;" disabled placeholder="Se calcula automáticamente">
+            </div>
+          </fieldset>
+        </div>
+
+        <!-- ---------- REQUERIMIENTOS ADICIONALES ---------- -->
+        <fieldset class="card">
+          <legend>Requerimientos adicionales</legend>
+          <div class="checks-grid">
+            <label class="check"><input type="checkbox" id="reqTraslado"> Requiere traslado</label>
+            <label class="check"><input type="checkbox" id="reqAlojamiento"> Requiere alojamiento</label>
+            <label class="check"><input type="checkbox" id="reqViaticos"> Requiere viáticos</label>
+            <label class="check"><input type="checkbox" id="reqEvidencia"> Evidencia fotográfica</label>
+            <label class="check"><input type="checkbox" id="reqInforme"> Informe final</label>
+            <label class="check"><input type="checkbox" id="reqDashboard"> Dashboard / presentación de resultados</label>
+          </div>
+        </fieldset>
+
+        <!-- ---------- AJUSTES COMERCIALES ---------- -->
+        <fieldset class="card">
+          <legend>Ajustes comerciales</legend>
+          <div class="grid-2">
+            <div class="field">
+              <label for="descuentoPct">Descuento (%)</label>
+              <input type="number" id="descuentoPct" min="0" value="0" step="0.5">
+              <small class="hint" id="descuentoHint"></small>
+            </div>
+            <div class="field">
+              <label for="costoAdicionalManual">Costo adicional manual (Gs.)</label>
+              <input type="number" id="costoAdicionalManual" min="0" value="0" step="1000">
+            </div>
+          </div>
+          <div class="field">
+            <label for="motivoCostoAdicional">Motivo del costo adicional</label>
+            <input type="text" id="motivoCostoAdicional" placeholder="Ej: Material POP especial solicitado por el cliente">
+          </div>
+        </fieldset>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="btnCalcular">Calcular cotización</button>
+          <span class="form-error" id="formError"></span>
+        </div>
+      </form>
+
+      <!-- ---------- RESULTADO ---------- -->
+      <section class="result" id="resultBox" hidden>
+
+        <div class="result-total-card">
+          <div>
+            <span class="label">Total estimado</span>
+            <div class="total-value" id="totalValue">Gs. 0</div>
+            <span class="quote-code" id="resultQuoteCode">COT-2026-001</span>
+          </div>
+          <div class="result-mini-stats">
+            <div><span id="statPromedioPDV">Gs. 0</span><small>Promedio por PDV</small></div>
+            <div><span id="statPromedioVisita">Gs. 0</span><small>Promedio por visita</small></div>
+          </div>
+        </div>
+
+        <div id="personalizadaWarning" class="alert alert-warning" hidden>
+          Este servicio requiere una cotización personalizada. El cálculo mostrado es orientativo y debe ser revisado comercialmente.
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <h3>Resumen del servicio</h3>
+            <table class="summary-table" id="summaryTable"></table>
+          </div>
+          <div class="card">
+            <h3>Desglose del cálculo (uso interno)</h3>
+            <table class="summary-table" id="breakdownTable"></table>
+          </div>
+        </div>
+
+        <div class="alert alert-note">
+          Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo, ubicación de los puntos de venta y requerimientos adicionales del cliente.
+        </div>
+
+        <div class="result-actions">
+          <button class="btn btn-ghost" id="btnPreview">Vista previa</button>
+          <button class="btn btn-ghost" id="btnImprimir">Imprimir</button>
+          <button class="btn btn-secondary" id="btnPdfCliente">Descargar PDF (cliente)</button>
+          <button class="btn btn-secondary" id="btnPdfInterno">Descargar PDF (interno)</button>
+          <button class="btn btn-primary" id="btnGuardar">Guardar en historial</button>
+        </div>
+      </section>
+    </section>
+
+    <!-- ---------- VISTA: HISTORIAL ---------- -->
+    <section class="view" id="view-historial">
+      <header class="view-header">
+        <div>
+          <h1>Historial de cotizaciones</h1>
+          <p class="subtitle">Buscá, filtrá y gestioná las cotizaciones guardadas.</p>
+        </div>
+      </header>
+
+      <div class="card filters-card">
+        <div class="filters-grid">
+          <div class="field">
+            <label for="fBuscar">Buscar por cliente o número</label>
+            <input type="text" id="fBuscar" placeholder="Ej: Don Luis o COT-2026-001">
+          </div>
+          <div class="field">
+            <label for="fZona">Zona</label>
+            <select id="fZona">
+              <option value="">Todas</option>
+              <option value="asuncion">Asunción</option>
+              <option value="gran_asuncion">Gran Asunción</option>
+              <option value="interior">Interior</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="fEstado">Estado</label>
+            <select id="fEstado">
+              <option value="">Todos</option>
+              <option value="Borrador">Borrador</option>
+              <option value="Enviada">Enviada</option>
+              <option value="Aprobada">Aprobada</option>
+              <option value="Rechazada">Rechazada</option>
+              <option value="Vencida">Vencida</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="fDesde">Desde</label>
+            <input type="date" id="fDesde">
+          </div>
+          <div class="field">
+            <label for="fHasta">Hasta</label>
+            <input type="date" id="fHasta">
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap card">
+        <table class="data-table" id="historialTable">
+          <thead>
+            <tr>
+              <th>N° Cotización</th>
+              <th>Cliente</th>
+              <th>Fecha</th>
+              <th>Servicio</th>
+              <th>PDV</th>
+              <th>Zona</th>
+              <th>Total estimado</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="historialBody"></tbody>
+        </table>
+        <p class="empty-state" id="historialEmpty" hidden>Todavía no hay cotizaciones guardadas.</p>
+      </div>
+    </section>
+
+    <!-- ---------- VISTA: CONFIGURACIÓN ---------- -->
+    <section class="view" id="view-config">
+      <header class="view-header">
+        <div>
+          <h1>Configuración de costos</h1>
+          <p class="subtitle">Estos valores alimentan todas las fórmulas del cotizador. Modificalos según tus tarifas reales.</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-ghost" id="btnExportConfig">Exportar configuración</button>
+          <label class="btn btn-ghost file-btn">
+            Importar configuración
+            <input type="file" id="inputImportConfig" accept="application/json" hidden>
+          </label>
+          <button class="btn btn-danger-outline" id="btnRestaurarConfig">Restaurar valores de ejemplo</button>
+        </div>
+      </header>
+
+      <div class="alert alert-note">
+        Los valores marcados como <strong>VALORES DE EJEMPLO</strong> son solo para demostración. Reemplazalos por tus tarifas comerciales reales antes de cotizar a un cliente.
+      </div>
+
+      <!-- ESCALAS -->
+      <div class="card">
+        <div class="card-header-row">
+          <h3>Escalas de precio por cantidad de PDV <span class="tag-example">VALORES DE EJEMPLO</span></h3>
+          <button type="button" class="btn btn-primary btn-sm" id="btnAgregarEscala">+ Agregar escala</button>
+        </div>
+
+        <div class="field" style="max-width:360px;">
+          <label for="modalidadPrecio">Modalidad de cálculo entre escalas</label>
+          <select id="modalidadPrecio">
+            <option value="cerrado">Precio cerrado por escala</option>
+            <option value="progresivo">Precio progresivo (interpolado)</option>
+          </select>
+        </div>
+
+        <div class="table-wrap">
+          <table class="data-table" id="escalasTable">
+            <thead>
+              <tr>
+                <th>PDV mínimo</th>
+                <th>PDV máximo</th>
+                <th>Precio base (Gs.)</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="escalasBody"></tbody>
+          </table>
+        </div>
+        <p class="hint" id="escalasWarning"></p>
+      </div>
+
+      <!-- PARÁMETROS GENERALES -->
+      <div class="grid-2">
+        <fieldset class="card">
+          <legend>Productos y volumen</legend>
+          <div class="field">
+            <label for="cfgProductosIncluidos">Productos incluidos en el precio base (por PDV)</label>
+            <input type="number" id="cfgProductosIncluidos" min="0">
+          </div>
+          <div class="field">
+            <label for="cfgRecargoProducto">Recargo por producto adicional (Gs. por producto, por PDV)</label>
+            <input type="number" id="cfgRecargoProducto" min="0">
+          </div>
+          <div class="field">
+            <label for="cfgPdvPorAuditor">PDV cubiertos por auditor, por ronda (para cálculo automático)</label>
+            <input type="number" id="cfgPdvPorAuditor" min="1">
+          </div>
+          <div class="field">
+            <label for="cfgCostoVisitaAdicional">Costo por visita adicional (Gs. por PDV, por visita extra)</label>
+            <input type="number" id="cfgCostoVisitaAdicional" min="0">
+          </div>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend>Zona y traslado</legend>
+          <div class="field">
+            <label for="cfgRecargoGranAsuncion">Recargo Gran Asunción (%)</label>
+            <input type="number" id="cfgRecargoGranAsuncion" min="0" step="0.1">
+          </div>
+          <div class="field">
+            <label for="cfgRecargoInterior">Recargo Interior (%)</label>
+            <input type="number" id="cfgRecargoInterior" min="0" step="0.1">
+          </div>
+          <div class="field">
+            <label for="cfgCostoTraslado">Costo de traslado por auditor, por ronda (Gs.)</label>
+            <input type="number" id="cfgCostoTraslado" min="0">
+          </div>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend>Viáticos y alojamiento</legend>
+          <div class="field">
+            <label for="cfgViaticoDia">Viático por auditor, por día (Gs.)</label>
+            <input type="number" id="cfgViaticoDia" min="0">
+          </div>
+          <div class="field">
+            <label for="cfgAlojamientoNoche">Alojamiento por auditor, por noche (Gs.)</label>
+            <input type="number" id="cfgAlojamientoNoche" min="0">
+          </div>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend>Entregables</legend>
+          <div class="field">
+            <label for="cfgEvidenciaFotografica">Evidencia fotográfica (Gs. por PDV, por ronda)</label>
+            <input type="number" id="cfgEvidenciaFotografica" min="0">
+          </div>
+          <div class="field">
+            <label for="cfgInformeFinal">Informe final (Gs., costo único)</label>
+            <input type="number" id="cfgInformeFinal" min="0">
+          </div>
+          <div class="field">
+            <label for="cfgDashboard">Dashboard de resultados (Gs., costo único)</label>
+            <input type="number" id="cfgDashboard" min="0">
+          </div>
+          <div class="field">
+            <label for="cfgPresentacion">Presentación de resultados (Gs., costo único)</label>
+            <input type="number" id="cfgPresentacion" min="0">
+          </div>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend>Comercial e impuestos</legend>
+          <div class="field">
+            <label for="cfgMargen">Margen comercial (%)</label>
+            <input type="number" id="cfgMargen" min="0" step="0.1">
+          </div>
+          <div class="field">
+            <label for="cfgIva">IVA (%)</label>
+            <input type="number" id="cfgIva" min="0" step="0.1">
+          </div>
+          <div class="field">
+            <label for="cfgDescuentoMax">Descuento máximo permitido (%)</label>
+            <input type="number" id="cfgDescuentoMax" min="0" step="0.1">
+          </div>
+          <div class="field">
+            <label for="cfgMoneda">Moneda principal</label>
+            <input type="text" id="cfgMoneda" value="PYG" disabled>
+            <small class="hint">Guaraníes (Gs.) — moneda fija de esta versión.</small>
+          </div>
+        </fieldset>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-primary" id="btnGuardarConfig">Guardar configuración</button>
+        <span class="form-error" id="configSavedMsg"></span>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ====================== MODAL GENÉRICO (confirmaciones / vista previa) ====================== -->
+<div class="modal-overlay" id="modalOverlay" hidden>
+  <div class="modal" id="modalBox">
+    <button class="modal-close" id="modalClose">&times;</button>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<div id="toastContainer" class="toast-container"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
