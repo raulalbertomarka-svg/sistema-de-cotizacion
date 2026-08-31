@@ -83,6 +83,19 @@
           { id: "ms_e3", min: 16, max: 20, precioBase: 11000000 },
           { id: "ms_e4", min: 21, max: 30, precioBase: 15500000 },
         ],
+        // Puntos / criterios que se marcan como checklist en el formulario en
+        // lugar del campo numérico de "productos". Si esta lista está vacía,
+        // el formulario vuelve a mostrar el campo numérico manual.
+        puntosEvaluacion: [
+          { id: "ms_p1", nombre: "Atención al cliente" },
+          { id: "ms_p2", nombre: "Tiempo de espera" },
+          { id: "ms_p3", nombre: "Orden y limpieza del local" },
+          { id: "ms_p4", nombre: "Cumplimiento de uniforme y protocolo" },
+          { id: "ms_p5", nombre: "Disponibilidad de stock" },
+          { id: "ms_p6", nombre: "Precio correcto en góndola" },
+          { id: "ms_p7", nombre: "Conocimiento del producto" },
+          { id: "ms_p8", nombre: "Amabilidad y trato" },
+        ],
         productosIncluidos: 8, // criterios de evaluación incluidos por visita
         recargoProductoAdicional: 8000,
         pdvPorAuditor: 8,
@@ -111,6 +124,9 @@
         { id: "e3", min: 16, max: 20, precioBase: 18000000 },
         { id: "e4", min: 21, max: 30, precioBase: 25000000 },
       ],
+      // Auditoría PDV no usa checklist de puntos: se deja vacío a propósito,
+      // por lo que el formulario muestra el campo numérico manual de productos.
+      puntosEvaluacion: [],
       productosIncluidos: 10,
       recargoProductoAdicional: 15000,
       pdvPorAuditor: 5,
@@ -153,6 +169,7 @@
       merged[t.value] = savedForType
         ? Object.assign({}, def, savedForType, {
             escalas: savedForType.escalas && savedForType.escalas.length ? savedForType.escalas : def.escalas,
+            puntosEvaluacion: Array.isArray(savedForType.puntosEvaluacion) ? savedForType.puntosEvaluacion : def.puntosEvaluacion,
           })
         : def;
     });
@@ -556,10 +573,10 @@
       this.els.tipoServicio.innerHTML = SERVICE_TYPES.map((t) => `<option value="${t.value}">${escapeHtml(t.label)}</option>`).join("");
       this.els.tipoServicio.addEventListener("change", () => {
         this.updateDescuentoHint();
-        this.updateProductosLabel();
+        this.updatePuntosEvaluacionUI();
         this.toggleModoAuditores();
       });
-      this.updateProductosLabel();
+      this.updatePuntosEvaluacionUI();
 
       document.getElementById("zona").addEventListener("change", () => this.toggleDeptoField());
       document.getElementById("frecuencia").addEventListener("change", () => this.toggleDuracionField());
@@ -610,17 +627,58 @@
         `Máximo permitido según configuración: ${cfg.descuentoMaximoPct}%`;
     },
 
-    updateProductosLabel() {
-      const label = document.getElementById("labelProductosPorPDV");
-      if (this.els.tipoServicio.value === "mystery_shopper") {
-        label.textContent = "Criterios evaluados por visita *";
+    // Alterna entre el campo numérico manual de "productos por PDV" y el
+    // checklist de puntos de evaluación, según lo configurado para el tipo
+    // de servicio seleccionado (ver "Puntos de evaluación a medir" en
+    // Configuración de costos).
+    updatePuntosEvaluacionUI(puntosSeleccionadosPrevios) {
+      const cfg = getConfig(this.els.tipoServicio.value);
+      const puntos = cfg.puntosEvaluacion || [];
+      const numericoWrap = document.getElementById("productosNumericoWrap");
+      const checklistWrap = document.getElementById("puntosEvaluacionWrap");
+      const checklistBox = document.getElementById("puntosEvaluacionChecklist");
+
+      if (puntos.length > 0) {
+        numericoWrap.style.display = "none";
+        this.els.productosPorPDV.required = false;
+        checklistWrap.style.display = "block";
+
+        const seleccionadosIds = (puntosSeleccionadosPrevios || []).map((p) => p.id);
+        checklistBox.innerHTML = puntos
+          .map(
+            (p) => `
+            <label class="check">
+              <input type="checkbox" class="punto-evaluacion-check" data-id="${p.id}" data-nombre="${escapeHtml(p.nombre)}"
+                ${seleccionadosIds.includes(p.id) ? "checked" : ""}>
+              ${escapeHtml(p.nombre)}
+            </label>`
+          )
+          .join("");
       } else {
-        label.textContent = "Productos aprox. por PDV *";
+        numericoWrap.style.display = "block";
+        this.els.productosPorPDV.required = true;
+        checklistWrap.style.display = "none";
+        checklistBox.innerHTML = "";
       }
     },
 
     leerDatos() {
       const modoAuditores = document.querySelector('input[name="modoAuditores"]:checked').value;
+      const cfg = getConfig(this.els.tipoServicio.value);
+      const usaChecklist = (cfg.puntosEvaluacion || []).length > 0;
+
+      let productosPorPDV;
+      let puntosSeleccionados = null;
+      if (usaChecklist) {
+        puntosSeleccionados = Array.from(document.querySelectorAll(".punto-evaluacion-check:checked")).map((el) => ({
+          id: el.dataset.id,
+          nombre: el.dataset.nombre,
+        }));
+        productosPorPDV = puntosSeleccionados.length;
+      } else {
+        productosPorPDV = Number(this.els.productosPorPDV.value) || 0;
+      }
+
       return {
         clienteNombre: this.els.clienteNombre.value.trim(),
         clienteContacto: this.els.clienteContacto.value.trim(),
@@ -631,7 +689,8 @@
         tipoServicio: this.els.tipoServicio.value,
         tipoServicioLabel: this.els.tipoServicio.options[this.els.tipoServicio.selectedIndex].text,
         cantidadPDV: Number(this.els.cantidadPDV.value) || 0,
-        productosPorPDV: Number(this.els.productosPorPDV.value) || 0,
+        productosPorPDV,
+        puntosSeleccionados, // null si el tipo de servicio usa el campo numérico manual
         visitasPorPDV: Number(this.els.visitasPorPDV.value) || 1,
         frecuencia: this.els.frecuencia.value,
         duracionMeses: Number(this.els.duracionMeses.value) || 1,
@@ -657,7 +716,11 @@
       if (!datos.fechaCotizacion) errores.push("Seleccioná la fecha de cotización.");
       if (!datos.vigenciaDias || datos.vigenciaDias <= 0) errores.push("La vigencia debe ser mayor a cero.");
       if (!datos.cantidadPDV || datos.cantidadPDV <= 0) errores.push("La cantidad de PDV debe ser mayor que cero.");
-      if (!datos.productosPorPDV || datos.productosPorPDV <= 0) errores.push("La cantidad de productos por PDV debe ser válida.");
+      if (datos.puntosSeleccionados !== null) {
+        if (!datos.puntosSeleccionados.length) errores.push("Seleccioná al menos un punto a evaluar.");
+      } else if (!datos.productosPorPDV || datos.productosPorPDV <= 0) {
+        errores.push("La cantidad de productos por PDV debe ser válida.");
+      }
       if (datos.zona === "interior" && !datos.departamento) errores.push("Indicá el departamento o ciudad del Interior.");
       if (datos.modoAuditores === "manual" && (!datos.cantidadAuditores || datos.cantidadAuditores <= 0)) {
         errores.push("Indicá la cantidad de auditores (modo manual).");
@@ -706,6 +769,7 @@
     limpiar() {
       document.getElementById("quoteForm").reset();
       this.els.fechaCotizacion.value = todayISO();
+      this.updatePuntosEvaluacionUI();
       this.toggleDeptoField();
       this.toggleDuracionField();
       this.toggleModoAuditores();
@@ -744,7 +808,7 @@
       this.els.descuentoPct.value = datos.descuentoPct || 0;
       this.els.costoAdicionalManual.value = datos.costoAdicionalManual || 0;
       this.els.motivoCostoAdicional.value = datos.motivoCostoAdicional || "";
-      this.updateProductosLabel();
+      this.updatePuntosEvaluacionUI(datos.puntosSeleccionados);
       this.updateDescuentoHint();
       this.toggleDeptoField();
       this.toggleDuracionField();
@@ -781,6 +845,23 @@
     return items.length ? items.join(", ") : "Ninguno";
   }
 
+  // Devuelve las filas de resumen para "productos por PDV" o, si el tipo de
+  // servicio usa checklist de puntos de evaluación (ej. Mystery Shopper),
+  // las filas equivalentes con el detalle de los puntos marcados.
+  function filasProductosOPuntos(datos, calculo) {
+    if (datos.puntosSeleccionados && datos.puntosSeleccionados.length) {
+      const nombres = datos.puntosSeleccionados.map((p) => escapeHtml(p.nombre)).join(", ");
+      return [
+        ["Puntos evaluados por visita", `${datos.puntosSeleccionados.length} — ${nombres}`],
+        ["Total aprox. de evaluaciones", calculo.totalProductosAuditar.toLocaleString("es-PY")],
+      ];
+    }
+    return [
+      ["Productos por PDV", datos.productosPorPDV],
+      ["Total aprox. de productos a auditar", calculo.totalProductosAuditar.toLocaleString("es-PY")],
+    ];
+  }
+
   const Resultado = {
     render(resultado) {
       const { datos, calculo, numero } = resultado;
@@ -798,8 +879,7 @@
         ["Proyecto", escapeHtml(datos.nombreProyecto || "-")],
         ["Servicio", escapeHtml(datos.tipoServicioLabel)],
         ["Cantidad de PDV", datos.cantidadPDV],
-        ["Productos por PDV", datos.productosPorPDV],
-        ["Total aprox. de productos a auditar", calculo.totalProductosAuditar.toLocaleString("es-PY")],
+        ...filasProductosOPuntos(datos, calculo),
         ["Zona", ZONA_LABEL[datos.zona] + (datos.departamento ? ` (${escapeHtml(datos.departamento)})` : "")],
         ["Visitas por PDV, por ronda", datos.visitasPorPDV],
         ["Frecuencia", FRECUENCIA_LABEL[datos.frecuencia]],
@@ -848,7 +928,9 @@
       const filasCliente = [
         ["Servicio", escapeHtml(datos.tipoServicioLabel)],
         ["Cantidad de puntos de venta", datos.cantidadPDV],
-        ["Productos por PDV", datos.productosPorPDV],
+        ...(datos.puntosSeleccionados && datos.puntosSeleccionados.length
+          ? [["Puntos evaluados por visita", datos.puntosSeleccionados.map((p) => escapeHtml(p.nombre)).join(", ")]]
+          : [["Productos por PDV", datos.productosPorPDV]]),
         ["Zona", ZONA_LABEL[datos.zona] + (datos.departamento ? ` (${escapeHtml(datos.departamento)})` : "")],
         ["Frecuencia", FRECUENCIA_LABEL[datos.frecuencia]],
         ["Duración", datos.frecuencia === "unica" ? "Única vez" : `${datos.duracionMeses} mes(es)`],
@@ -964,7 +1046,18 @@
       y += 16;
       drawRow("Servicio", datos.tipoServicioLabel);
       drawRow("Cantidad de PDV", datos.cantidadPDV);
-      drawRow("Productos por PDV", datos.productosPorPDV);
+      if (datos.puntosSeleccionados && datos.puntosSeleccionados.length) {
+        drawRow("Puntos evaluados por visita", datos.puntosSeleccionados.length);
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(8.5);
+        const puntosTexto = doc.splitTextToSize(datos.puntosSeleccionados.map((p) => p.nombre).join(" · "), 500);
+        doc.text(puntosTexto, margin, y);
+        y += puntosTexto.length * 11 + 4;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+      } else {
+        drawRow("Productos por PDV", datos.productosPorPDV);
+      }
       drawRow("Zona", ZONA_LABEL[datos.zona] + (datos.departamento ? ` (${datos.departamento})` : ""));
       drawRow("Frecuencia", FRECUENCIA_LABEL[datos.frecuencia]);
       drawRow("Duración", datos.frecuencia === "unica" ? "Única vez" : `${datos.duracionMeses} mes(es)`);
@@ -1273,6 +1366,7 @@
       });
 
       document.getElementById("btnAgregarEscala").addEventListener("click", () => this.agregarEscala());
+      document.getElementById("btnAgregarPunto").addEventListener("click", () => this.agregarPunto());
       document.getElementById("btnGuardarConfig").addEventListener("click", () => this.guardar());
       document.getElementById("btnRestaurarConfig").addEventListener("click", () => this.confirmarRestaurar());
       document.getElementById("btnExportConfig").addEventListener("click", () => this.exportar());
@@ -1289,6 +1383,8 @@
       const c = this.configActual();
       document.getElementById("escalasTituloTipo").innerHTML =
         `Escalas de precio por cantidad de PDV — ${escapeHtml(getServiceTypeLabel(this.tipoActual))} <span class="tag-example">VALORES DE EJEMPLO</span>`;
+      document.getElementById("puntosTituloTipo").innerHTML =
+        `Puntos de evaluación a medir — ${escapeHtml(getServiceTypeLabel(this.tipoActual))} <span class="tag-example">VALORES DE EJEMPLO</span>`;
       this.els.modalidadPrecio.value = c.modalidadPrecio;
       this.els.cfgProductosIncluidos.value = c.productosIncluidos;
       this.els.cfgRecargoProducto.value = c.recargoProductoAdicional;
@@ -1307,6 +1403,76 @@
       this.els.cfgIva.value = c.ivaPct;
       this.els.cfgDescuentoMax.value = c.descuentoMaximoPct;
       this.renderEscalas();
+      this.renderPuntos();
+    },
+
+    renderPuntos() {
+      const cfg = this.configActual();
+      const puntos = cfg.puntosEvaluacion || [];
+      const tbody = document.getElementById("puntosBody");
+      const empty = document.getElementById("puntosEmpty");
+
+      if (!puntos.length) {
+        tbody.innerHTML = "";
+        empty.hidden = false;
+        return;
+      }
+      empty.hidden = true;
+
+      tbody.innerHTML = puntos
+        .map(
+          (p) => `
+        <tr data-id="${p.id}">
+          <td><input type="text" class="punto-nombre" value="${escapeHtml(p.nombre)}"></td>
+          <td>
+            <div class="row-actions">
+              <button class="btn btn-ghost btn-icon" data-punto-action="guardar" data-id="${p.id}" title="Guardar cambios">💾</button>
+              <button class="btn btn-danger-outline btn-icon" data-punto-action="eliminar" data-id="${p.id}" title="Eliminar punto">🗑</button>
+            </div>
+          </td>
+        </tr>`
+        )
+        .join("");
+    },
+
+    agregarPunto() {
+      const cfg = this.configActual();
+      if (!Array.isArray(cfg.puntosEvaluacion)) cfg.puntosEvaluacion = [];
+      cfg.puntosEvaluacion.push({ id: uid("p"), nombre: "Nuevo punto a evaluar" });
+      saveConfigs(CONFIGS);
+      this.renderPuntos();
+      showToast("Punto agregado. Editá el nombre y guardalo.");
+    },
+
+    guardarPuntoFila(id) {
+      const fila = document.querySelector(`#puntosBody tr[data-id="${id}"]`);
+      if (!fila) return;
+      const nombre = fila.querySelector(".punto-nombre").value.trim();
+      if (!nombre) {
+        showToast("El nombre del punto no puede estar vacío.", "error");
+        return;
+      }
+      const cfg = this.configActual();
+      const punto = cfg.puntosEvaluacion.find((p) => p.id === id);
+      if (punto) {
+        punto.nombre = nombre;
+        saveConfigs(CONFIGS);
+        showToast("Punto actualizado.", "success");
+      }
+    },
+
+    eliminarPunto(id) {
+      Modal.confirm(
+        "¿Eliminar este punto de evaluación? Esta acción no se puede deshacer.",
+        () => {
+          const cfg = this.configActual();
+          cfg.puntosEvaluacion = cfg.puntosEvaluacion.filter((p) => p.id !== id);
+          saveConfigs(CONFIGS);
+          this.renderPuntos();
+          showToast("Punto eliminado. Si esta era la última fila, el formulario volverá a usar el campo numérico manual.");
+        },
+        { title: "Eliminar punto de evaluación", confirmLabel: "Eliminar", danger: true }
+      );
     },
 
     renderEscalas() {
@@ -1531,6 +1697,14 @@
     if (btn.dataset.escalaAction === "eliminar") ConfigUI.eliminarEscala(id);
   });
 
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-punto-action]");
+    if (!btn) return;
+    const id = btn.dataset.id;
+    if (btn.dataset.puntoAction === "guardar") ConfigUI.guardarPuntoFila(id);
+    if (btn.dataset.puntoAction === "eliminar") ConfigUI.eliminarPunto(id);
+  });
+
   /* ========================================================================
      7. NAVEGACIÓN, ARRANQUE DE LA APP
      ======================================================================== */
@@ -1550,6 +1724,13 @@
       document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("is-active", b.dataset.view === view));
       document.getElementById("sidebar").classList.remove("is-open");
       if (view === "historial") renderHistorialTable();
+      if (view === "nueva") {
+        const seleccionActual = Array.from(document.querySelectorAll(".punto-evaluacion-check:checked")).map((el) => ({
+          id: el.dataset.id,
+          nombre: el.dataset.nombre,
+        }));
+        Form.updatePuntosEvaluacionUI(seleccionActual);
+      }
       window.scrollTo({ top: 0, behavior: "instant" });
     },
   };

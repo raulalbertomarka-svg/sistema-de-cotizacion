@@ -90,6 +90,15 @@ costos" se arman solos a partir de esa lista.
 
 Dentro de la configuración de cada tipo de servicio podés definir:
 
+- **Puntos de evaluación a medir**: para servicios como *Mystery Shopper*,
+  donde en vez de "cantidad de productos" lo que importa es una lista de
+  criterios (atención al cliente, tiempo de espera, limpieza, cumplimiento
+  de protocolo, etc.). Si cargás al menos un punto acá, el formulario de
+  "Nueva cotización" muestra automáticamente un checklist con esos puntos en
+  lugar del campo numérico manual, y la cantidad de puntos marcados se usa
+  como "criterios evaluados" para calcular los recargos por volumen. Si
+  dejás la lista vacía (como en Auditoría PDV), el formulario vuelve a
+  mostrar el campo numérico manual de "productos por PDV".
 - **Escalas de precio por cantidad de PDV**: agregá, editá o eliminá tantas
   escalas como necesites con el botón "+ Agregar escala". Cada escala tiene
   un mínimo, un máximo y un precio base. El sistema avisa si dejás huecos o

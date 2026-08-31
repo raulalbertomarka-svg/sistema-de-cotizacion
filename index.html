@@ -113,15 +113,25 @@
               <select id="tipoServicio"></select>
             </div>
 
-            <div class="field-row">
-              <div class="field">
-                <label for="cantidadPDV">Cantidad de puntos de venta (PDV) *</label>
-                <input type="number" id="cantidadPDV" min="1" required placeholder="Ej: 20">
-              </div>
-              <div class="field">
-                <label for="productosPorPDV" id="labelProductosPorPDV">Productos aprox. por PDV *</label>
-                <input type="number" id="productosPorPDV" min="1" required placeholder="Ej: 15">
-              </div>
+            <div class="field">
+              <label for="cantidadPDV">Cantidad de puntos de venta (PDV) *</label>
+              <input type="number" id="cantidadPDV" min="1" required placeholder="Ej: 20">
+            </div>
+
+            <!-- Se muestra para tipos de servicio SIN puntos de evaluación configurados
+                 (ej: Auditoría PDV) -->
+            <div class="field" id="productosNumericoWrap">
+              <label for="productosPorPDV" id="labelProductosPorPDV">Productos aprox. por PDV *</label>
+              <input type="number" id="productosPorPDV" min="1" placeholder="Ej: 15">
+            </div>
+
+            <!-- Se muestra para tipos de servicio CON puntos de evaluación configurados
+                 (ej: Mystery Shopper). La lista de puntos se arma desde
+                 Configuración de costos > Puntos de evaluación a medir. -->
+            <div class="field" id="puntosEvaluacionWrap" style="display:none;">
+              <label>Puntos a evaluar en la visita *</label>
+              <div class="checks-grid" id="puntosEvaluacionChecklist"></div>
+              <small class="hint">La cantidad de puntos marcados se usa como "criterios evaluados por visita" para el cálculo de recargos por volumen.</small>
             </div>
 
             <div class="field-row">
@@ -388,6 +398,31 @@
           </table>
         </div>
         <p class="hint" id="escalasWarning"></p>
+      </div>
+
+      <!-- PUNTOS DE EVALUACIÓN (checklist) -->
+      <div class="card">
+        <div class="card-header-row">
+          <h3 id="puntosTituloTipo">Puntos de evaluación a medir <span class="tag-example">VALORES DE EJEMPLO</span></h3>
+          <button type="button" class="btn btn-primary btn-sm" id="btnAgregarPunto">+ Agregar punto</button>
+        </div>
+        <p class="hint">
+          Si este tipo de servicio tiene puntos definidos acá, en "Nueva cotización" aparecerán como checklist
+          (por ejemplo, para Mystery Shopper: atención al cliente, tiempo de espera, limpieza, etc.) en lugar del
+          campo numérico de productos. Dejá la lista vacía para usar el campo numérico manual, como en Auditoría PDV.
+        </p>
+        <div class="table-wrap">
+          <table class="data-table" id="puntosTable">
+            <thead>
+              <tr>
+                <th>Punto / criterio a evaluar</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="puntosBody"></tbody>
+          </table>
+        </div>
+        <p class="empty-state" id="puntosEmpty" hidden>No hay puntos configurados para este tipo de servicio. Se usará el campo numérico manual en el formulario.</p>
       </div>
 
       <!-- PARÁMETROS GENERALES -->
