@@ -68,8 +68,27 @@ definidas como respaldo.
 
 ## 4. Cómo utilizar la Configuración de costos
 
-Todo lo que el cotizador calcula sale de la sección **Configuración de
-costos** del menú lateral. Ahí podés definir, sin tocar código:
+El sistema soporta **más de un tipo de servicio** (por ejemplo "Auditoría en
+punto de venta" y "Mystery Shopper / cliente incógnito"), y **cada uno tiene
+su propio set de tarifas, completamente independiente**: sus propias
+escalas de precio, recargos, viáticos, márgenes, IVA, descuento máximo, etc.
+
+Arriba de todo, en la sección **Configuración de costos**, hay un selector
+**"Tipo de servicio a configurar"**. Todo lo que edites y guardes en esa
+pantalla aplica solamente al tipo de servicio seleccionado ahí; los demás
+tipos no se ven afectados.
+
+Para agregar un nuevo tipo de servicio (por ejemplo "Relevamiento de
+precios"), no hace falta tocar el HTML: alcanza con editar el archivo
+`app.js` en dos lugares, claramente comentados:
+
+1. La lista `SERVICE_TYPES`, agregando `{ value: "nuevo_tipo", label: "Nombre visible" }`.
+2. La función `getDefaultConfigForTipo()`, agregando sus valores de ejemplo.
+
+El formulario de "Nueva cotización" y el selector de "Configuración de
+costos" se arman solos a partir de esa lista.
+
+Dentro de la configuración de cada tipo de servicio podés definir:
 
 - **Escalas de precio por cantidad de PDV**: agregá, editá o eliminá tantas
   escalas como necesites con el botón "+ Agregar escala". Cada escala tiene
@@ -93,14 +112,15 @@ como estimado sujeto a revisión.
 
 Botones disponibles en Configuración:
 
-- **Guardar configuración**: aplica los cambios (se guardan automáticamente
-  en `localStorage`).
+- **Guardar configuración**: aplica los cambios del tipo de servicio
+  seleccionado (se guardan automáticamente en `localStorage`).
 - **Restaurar valores de ejemplo**: vuelve a los valores de demostración
-  originales (pide confirmación).
-- **Exportar configuración**: descarga un archivo `.json` con toda tu
-  configuración actual, útil como respaldo.
+  originales, solo del tipo de servicio seleccionado (pide confirmación).
+- **Exportar configuración**: descarga un archivo `.json` con la
+  configuración de **todos** los tipos de servicio, útil como respaldo.
 - **Importar configuración**: carga un archivo `.json` exportado
-  previamente.
+  previamente (también admite archivos exportados por versiones
+  anteriores del sistema, con un solo tipo de servicio).
 
 ## 5. Uso diario del cotizador
 

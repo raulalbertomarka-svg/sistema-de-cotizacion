@@ -49,11 +49,60 @@
   };
 
   /* ========================================================================
+     TIPOS DE SERVICIO
+     Para agregar un nuevo tipo de servicio (ej: "Relevamiento de precios"),
+     alcanza con: 1) agregar una entrada acá, y 2) agregar su función de
+     valores de ejemplo dentro de getDefaultConfigForTipo(). El formulario y
+     la sección de Configuración de costos se arman solos a partir de esta lista.
+     ======================================================================== */
+
+  const SERVICE_TYPES = [
+    { value: "auditoria_pdv", label: "Auditoría en punto de venta" },
+    { value: "mystery_shopper", label: "Mystery Shopper (cliente incógnito)" },
+  ];
+
+  function getServiceTypeLabel(value) {
+    const t = SERVICE_TYPES.find((s) => s.value === value);
+    return t ? t.label : value;
+  }
+
+  /* ========================================================================
      2. CONFIGURACIÓN DE COSTOS
+     Cada tipo de servicio tiene su propio set de tarifas, completamente
+     independiente: escalas de precio, recargos, viáticos, márgenes, etc.
      ======================================================================== */
 
   // VALORES DE EJEMPLO — reemplazar por tarifas comerciales reales.
-  function getDefaultConfig() {
+  function getDefaultConfigForTipo(tipo) {
+    if (tipo === "mystery_shopper") {
+      return {
+        modalidadPrecio: "cerrado", // "cerrado" | "progresivo"
+        escalas: [
+          { id: "ms_e1", min: 1, max: 10, precioBase: 6000000 },
+          { id: "ms_e2", min: 11, max: 15, precioBase: 8500000 },
+          { id: "ms_e3", min: 16, max: 20, precioBase: 11000000 },
+          { id: "ms_e4", min: 21, max: 30, precioBase: 15500000 },
+        ],
+        productosIncluidos: 8, // criterios de evaluación incluidos por visita
+        recargoProductoAdicional: 8000,
+        pdvPorAuditor: 8,
+        costoVisitaAdicional: 60000,
+        recargoGranAsuncionPct: 8,
+        recargoInteriorPct: 20,
+        costoTrasladoPorAuditorRonda: 120000,
+        viaticoAuditorDia: 80000,
+        alojamientoAuditorNoche: 180000,
+        evidenciaFotograficaPorPDV: 15000,
+        informeFinal: 700000,
+        dashboard: 1000000,
+        presentacionResultados: 500000,
+        margenComercialPct: 20,
+        ivaPct: 10,
+        descuentoMaximoPct: 15,
+        moneda: "PYG",
+      };
+    }
+    // "auditoria_pdv" y cualquier tipo no reconocido usan estos valores por defecto.
     return {
       modalidadPrecio: "cerrado", // "cerrado" | "progresivo"
       escalas: [
@@ -82,24 +131,43 @@
     };
   }
 
-  function loadConfig() {
+  function getDefaultConfigs() {
+    const result = {};
+    SERVICE_TYPES.forEach((t) => (result[t.value] = getDefaultConfigForTipo(t.value)));
+    return result;
+  }
+
+  function loadConfigs() {
     const saved = Store.get(STORAGE_KEYS.CONFIG, null);
-    if (!saved) {
-      const def = getDefaultConfig();
-      Store.set(STORAGE_KEYS.CONFIG, def);
-      return def;
+    const defaults = getDefaultConfigs();
+    if (!saved || typeof saved !== "object") {
+      Store.set(STORAGE_KEYS.CONFIG, defaults);
+      return defaults;
     }
-    // Merge para tolerar versiones anteriores sin algún campo nuevo.
-    return Object.assign(getDefaultConfig(), saved, {
-      escalas: saved.escalas && saved.escalas.length ? saved.escalas : getDefaultConfig().escalas,
+    // Merge por tipo, tolerando configuraciones guardadas con versiones
+    // anteriores (sin algún campo nuevo, o sin un tipo de servicio nuevo).
+    const merged = {};
+    SERVICE_TYPES.forEach((t) => {
+      const def = defaults[t.value];
+      const savedForType = saved[t.value];
+      merged[t.value] = savedForType
+        ? Object.assign({}, def, savedForType, {
+            escalas: savedForType.escalas && savedForType.escalas.length ? savedForType.escalas : def.escalas,
+          })
+        : def;
     });
+    return merged;
   }
 
-  function saveConfig(cfg) {
-    Store.set(STORAGE_KEYS.CONFIG, cfg);
+  function saveConfigs(configs) {
+    Store.set(STORAGE_KEYS.CONFIG, configs);
   }
 
-  let CONFIG = loadConfig();
+  let CONFIGS = loadConfigs();
+
+  function getConfig(tipo) {
+    return CONFIGS[tipo] || (CONFIGS[tipo] = getDefaultConfigForTipo(tipo));
+  }
 
   /* ========================================================================
      UTILIDADES GENERALES
@@ -485,6 +553,14 @@
 
       this.els.fechaCotizacion.value = todayISO();
 
+      this.els.tipoServicio.innerHTML = SERVICE_TYPES.map((t) => `<option value="${t.value}">${escapeHtml(t.label)}</option>`).join("");
+      this.els.tipoServicio.addEventListener("change", () => {
+        this.updateDescuentoHint();
+        this.updateProductosLabel();
+        this.toggleModoAuditores();
+      });
+      this.updateProductosLabel();
+
       document.getElementById("zona").addEventListener("change", () => this.toggleDeptoField());
       document.getElementById("frecuencia").addEventListener("change", () => this.toggleDuracionField());
       document.querySelectorAll('input[name="modoAuditores"]').forEach((r) =>
@@ -521,7 +597,7 @@
       const modo = document.querySelector('input[name="modoAuditores"]:checked').value;
       this.els.cantidadAuditores.disabled = modo === "automatico";
       if (modo === "automatico") {
-        const cfg = CONFIG;
+        const cfg = getConfig(this.els.tipoServicio.value);
         const pdv = Number(this.els.cantidadPDV.value) || 0;
         this.els.cantidadAuditores.value = pdv > 0 ? calcularCantidadAuditores(cfg, pdv) : "";
         this.els.cantidadAuditores.placeholder = "Se calcula automáticamente";
@@ -529,8 +605,18 @@
     },
 
     updateDescuentoHint() {
+      const cfg = getConfig(this.els.tipoServicio.value);
       document.getElementById("descuentoHint").textContent =
-        `Máximo permitido según configuración: ${CONFIG.descuentoMaximoPct}%`;
+        `Máximo permitido según configuración: ${cfg.descuentoMaximoPct}%`;
+    },
+
+    updateProductosLabel() {
+      const label = document.getElementById("labelProductosPorPDV");
+      if (this.els.tipoServicio.value === "mystery_shopper") {
+        label.textContent = "Criterios evaluados por visita *";
+      } else {
+        label.textContent = "Productos aprox. por PDV *";
+      }
     },
 
     leerDatos() {
@@ -577,8 +663,9 @@
         errores.push("Indicá la cantidad de auditores (modo manual).");
       }
       if (datos.descuentoPct < 0) errores.push("El descuento no puede ser negativo.");
-      if (datos.descuentoPct > CONFIG.descuentoMaximoPct) {
-        errores.push(`El descuento no puede superar el máximo permitido (${CONFIG.descuentoMaximoPct}%).`);
+      const cfgTipo = getConfig(datos.tipoServicio);
+      if (datos.descuentoPct > cfgTipo.descuentoMaximoPct) {
+        errores.push(`El descuento no puede superar el máximo permitido (${cfgTipo.descuentoMaximoPct}%).`);
       }
       if (datos.costoAdicionalManual > 0 && !datos.motivoCostoAdicional) {
         errores.push("Indicá el motivo del costo adicional manual.");
@@ -599,7 +686,7 @@
       }
       errBox.textContent = "";
 
-      const calculo = calcularCotizacion(datos, CONFIG);
+      const calculo = calcularCotizacion(datos, getConfig(datos.tipoServicio));
       this.numeroReservado = this.numeroReservado || peekNextQuoteNumber();
       this.ultimoResultado = { datos, calculo, numero: this.numeroReservado };
 
@@ -638,6 +725,7 @@
       this.els.vigenciaDias.value = datos.vigenciaDias || 15;
       this.els.nombreProyecto.value = datos.nombreProyecto || "";
       this.els.observaciones.value = datos.observaciones || "";
+      this.els.tipoServicio.value = datos.tipoServicio || "auditoria_pdv";
       this.els.cantidadPDV.value = datos.cantidadPDV || "";
       this.els.productosPorPDV.value = datos.productosPorPDV || "";
       this.els.visitasPorPDV.value = datos.visitasPorPDV || 1;
@@ -656,6 +744,8 @@
       this.els.descuentoPct.value = datos.descuentoPct || 0;
       this.els.costoAdicionalManual.value = datos.costoAdicionalManual || 0;
       this.els.motivoCostoAdicional.value = datos.motivoCostoAdicional || "";
+      this.updateProductosLabel();
+      this.updateDescuentoHint();
       this.toggleDeptoField();
       this.toggleDuracionField();
       this.toggleModoAuditores();
@@ -1164,6 +1254,8 @@
 
   const ConfigUI = {
     els: {},
+    tipoActual: SERVICE_TYPES[0].value,
+
     init() {
       const ids = [
         "modalidadPrecio", "cfgProductosIncluidos", "cfgRecargoProducto", "cfgPdvPorAuditor",
@@ -1172,6 +1264,13 @@
         "cfgDashboard", "cfgPresentacion", "cfgMargen", "cfgIva", "cfgDescuentoMax",
       ];
       ids.forEach((id) => (this.els[id] = document.getElementById(id)));
+
+      const tipoSelect = document.getElementById("configTipoServicio");
+      tipoSelect.innerHTML = SERVICE_TYPES.map((t) => `<option value="${t.value}">${escapeHtml(t.label)}</option>`).join("");
+      tipoSelect.addEventListener("change", () => {
+        this.tipoActual = tipoSelect.value;
+        this.cargarEnFormulario();
+      });
 
       document.getElementById("btnAgregarEscala").addEventListener("click", () => this.agregarEscala());
       document.getElementById("btnGuardarConfig").addEventListener("click", () => this.guardar());
@@ -1182,8 +1281,14 @@
       this.cargarEnFormulario();
     },
 
+    configActual() {
+      return getConfig(this.tipoActual);
+    },
+
     cargarEnFormulario() {
-      const c = CONFIG;
+      const c = this.configActual();
+      document.getElementById("escalasTituloTipo").innerHTML =
+        `Escalas de precio por cantidad de PDV — ${escapeHtml(getServiceTypeLabel(this.tipoActual))} <span class="tag-example">VALORES DE EJEMPLO</span>`;
       this.els.modalidadPrecio.value = c.modalidadPrecio;
       this.els.cfgProductosIncluidos.value = c.productosIncluidos;
       this.els.cfgRecargoProducto.value = c.recargoProductoAdicional;
@@ -1205,7 +1310,8 @@
     },
 
     renderEscalas() {
-      const escalas = getEscalasOrdenadas(CONFIG);
+      const cfg = this.configActual();
+      const escalas = getEscalasOrdenadas(cfg);
       const tbody = document.getElementById("escalasBody");
       tbody.innerHTML = escalas
         .map(
@@ -1224,7 +1330,7 @@
         )
         .join("");
 
-      const problemas = validarEscalas(CONFIG);
+      const problemas = validarEscalas(cfg);
       const warningEl = document.getElementById("escalasWarning");
       if (problemas.length) {
         warningEl.textContent = "⚠ " + problemas.join(" ");
@@ -1236,16 +1342,17 @@
     },
 
     agregarEscala() {
-      const escalas = getEscalasOrdenadas(CONFIG);
+      const cfg = this.configActual();
+      const escalas = getEscalasOrdenadas(cfg);
       const ultima = escalas[escalas.length - 1];
       const nuevoMin = ultima ? ultima.max + 1 : 1;
-      CONFIG.escalas.push({
+      cfg.escalas.push({
         id: uid("e"),
         min: nuevoMin,
         max: nuevoMin + 9,
         precioBase: ultima ? ultima.precioBase + 1000000 : 10000000,
       });
-      saveConfig(CONFIG);
+      saveConfigs(CONFIGS);
       this.renderEscalas();
       showToast("Escala agregada. Ajustá los valores y guardá los cambios.");
     },
@@ -1265,12 +1372,13 @@
         showToast("El PDV mínimo no puede ser mayor al máximo.", "error");
         return;
       }
-      const escala = CONFIG.escalas.find((e) => e.id === id);
+      const cfg = this.configActual();
+      const escala = cfg.escalas.find((e) => e.id === id);
       if (escala) {
         escala.min = min;
         escala.max = max;
         escala.precioBase = precio;
-        saveConfig(CONFIG);
+        saveConfigs(CONFIGS);
         this.renderEscalas();
         showToast("Escala actualizada.", "success");
       }
@@ -1280,8 +1388,9 @@
       Modal.confirm(
         "¿Eliminar esta escala de precio? Esta acción no se puede deshacer.",
         () => {
-          CONFIG.escalas = CONFIG.escalas.filter((e) => e.id !== id);
-          saveConfig(CONFIG);
+          const cfg = this.configActual();
+          cfg.escalas = cfg.escalas.filter((e) => e.id !== id);
+          saveConfigs(CONFIGS);
           this.renderEscalas();
           showToast("Escala eliminada.");
         },
@@ -1323,8 +1432,9 @@
       const vals = this.leerFormularioGeneral();
       const errores = this.validarGeneral(vals);
       const msgEl = document.getElementById("configSavedMsg");
+      const cfg = this.configActual();
 
-      const problemasEscalas = validarEscalas(CONFIG);
+      const problemasEscalas = validarEscalas(cfg);
       if (problemasEscalas.length) {
         errores.push("Revisá las escalas: " + problemasEscalas[0]);
       }
@@ -1336,38 +1446,38 @@
         return;
       }
 
-      CONFIG = Object.assign(CONFIG, vals);
-      saveConfig(CONFIG);
+      CONFIGS[this.tipoActual] = Object.assign(cfg, vals);
+      saveConfigs(CONFIGS);
       Form.updateDescuentoHint();
       msgEl.style.color = "var(--color-primary)";
-      msgEl.textContent = "Configuración guardada correctamente.";
-      showToast("Configuración de costos guardada.", "success");
+      msgEl.textContent = `Configuración de "${getServiceTypeLabel(this.tipoActual)}" guardada correctamente.`;
+      showToast(`Configuración de "${getServiceTypeLabel(this.tipoActual)}" guardada.`, "success");
       setTimeout(() => (msgEl.textContent = ""), 3500);
     },
 
     confirmarRestaurar() {
       Modal.confirm(
-        "¿Restaurar los valores de ejemplo? Se perderán todas las tarifas configuradas actualmente.",
+        `¿Restaurar los valores de ejemplo de "${getServiceTypeLabel(this.tipoActual)}"? Se perderán las tarifas configuradas actualmente para este tipo de servicio (los demás tipos no se ven afectados).`,
         () => {
-          CONFIG = getDefaultConfig();
-          saveConfig(CONFIG);
+          CONFIGS[this.tipoActual] = getDefaultConfigForTipo(this.tipoActual);
+          saveConfigs(CONFIGS);
           this.cargarEnFormulario();
           Form.updateDescuentoHint();
-          showToast("Se restauraron los valores de ejemplo.");
+          showToast(`Se restauraron los valores de ejemplo de "${getServiceTypeLabel(this.tipoActual)}".`);
         },
         { title: "Restaurar valores de ejemplo", confirmLabel: "Restaurar", danger: true }
       );
     },
 
     exportar() {
-      const blob = new Blob([JSON.stringify(CONFIG, null, 2)], { type: "application/json" });
+      const blob = new Blob([JSON.stringify(CONFIGS, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `config-cotizador-pdv-${todayISO()}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast("Configuración exportada.");
+      showToast("Configuración de todos los tipos de servicio exportada.");
     },
 
     importar(e) {
@@ -1377,9 +1487,29 @@
       reader.onload = () => {
         try {
           const data = JSON.parse(reader.result);
-          if (!data || !Array.isArray(data.escalas)) throw new Error("Formato inválido");
-          CONFIG = Object.assign(getDefaultConfig(), data);
-          saveConfig(CONFIG);
+          if (!data || typeof data !== "object") throw new Error("Formato inválido");
+
+          // Compatibilidad con exportaciones antiguas (un solo tipo de servicio,
+          // sin agrupar por tipo): si el JSON tiene "escalas" en la raíz, se
+          // interpreta como la configuración de "auditoria_pdv".
+          let importedByTipo = data;
+          if (Array.isArray(data.escalas)) {
+            importedByTipo = { auditoria_pdv: data };
+          }
+
+          const nuevas = {};
+          SERVICE_TYPES.forEach((t) => {
+            const def = getDefaultConfigForTipo(t.value);
+            const importedForType = importedByTipo[t.value];
+            nuevas[t.value] = importedForType
+              ? Object.assign({}, def, importedForType, {
+                  escalas: importedForType.escalas && importedForType.escalas.length ? importedForType.escalas : def.escalas,
+                })
+              : getConfig(t.value);
+          });
+
+          CONFIGS = nuevas;
+          saveConfigs(CONFIGS);
           this.cargarEnFormulario();
           Form.updateDescuentoHint();
           showToast("Configuración importada correctamente.", "success");

@@ -108,9 +108,9 @@
 
             <div class="field">
               <label for="tipoServicio">Tipo de servicio *</label>
-              <select id="tipoServicio">
-                <option value="auditoria_pdv">Auditoría en punto de venta</option>
-              </select>
+              <!-- Las opciones se generan desde app.js (constante SERVICE_TYPES),
+                   así al agregar un nuevo tipo de servicio no hace falta tocar este HTML. -->
+              <select id="tipoServicio"></select>
             </div>
 
             <div class="field-row">
@@ -119,7 +119,7 @@
                 <input type="number" id="cantidadPDV" min="1" required placeholder="Ej: 20">
               </div>
               <div class="field">
-                <label for="productosPorPDV">Productos aprox. por PDV *</label>
+                <label for="productosPorPDV" id="labelProductosPorPDV">Productos aprox. por PDV *</label>
                 <input type="number" id="productosPorPDV" min="1" required placeholder="Ej: 15">
               </div>
             </div>
@@ -335,12 +335,12 @@
           <p class="subtitle">Estos valores alimentan todas las fórmulas del cotizador. Modificalos según tus tarifas reales.</p>
         </div>
         <div class="header-actions">
-          <button class="btn btn-ghost" id="btnExportConfig">Exportar configuración</button>
-          <label class="btn btn-ghost file-btn">
+          <button class="btn btn-ghost" id="btnExportConfig" title="Exporta las tarifas de todos los tipos de servicio">Exportar configuración</button>
+          <label class="btn btn-ghost file-btn" title="Importa las tarifas de todos los tipos de servicio">
             Importar configuración
             <input type="file" id="inputImportConfig" accept="application/json" hidden>
           </label>
-          <button class="btn btn-danger-outline" id="btnRestaurarConfig">Restaurar valores de ejemplo</button>
+          <button class="btn btn-danger-outline" id="btnRestaurarConfig" title="Restaura solo el tipo de servicio seleccionado arriba">Restaurar valores de ejemplo</button>
         </div>
       </header>
 
@@ -348,10 +348,21 @@
         Los valores marcados como <strong>VALORES DE EJEMPLO</strong> son solo para demostración. Reemplazalos por tus tarifas comerciales reales antes de cotizar a un cliente.
       </div>
 
+      <div class="card">
+        <div class="field" style="max-width:420px; margin-bottom:0;">
+          <label for="configTipoServicio">Tipo de servicio a configurar</label>
+          <!-- Cada tipo de servicio tiene su propio set de tarifas, escalas y
+               recargos, totalmente independiente del resto. Las opciones se
+               generan desde app.js (constante SERVICE_TYPES). -->
+          <select id="configTipoServicio"></select>
+          <small class="hint">Los cambios que hagas abajo aplican solamente al tipo de servicio seleccionado acá.</small>
+        </div>
+      </div>
+
       <!-- ESCALAS -->
       <div class="card">
         <div class="card-header-row">
-          <h3>Escalas de precio por cantidad de PDV <span class="tag-example">VALORES DE EJEMPLO</span></h3>
+          <h3 id="escalasTituloTipo">Escalas de precio por cantidad de PDV <span class="tag-example">VALORES DE EJEMPLO</span></h3>
           <button type="button" class="btn btn-primary btn-sm" id="btnAgregarEscala">+ Agregar escala</button>
         </div>
 
