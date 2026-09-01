@@ -1,1760 +1,3497 @@
 /* ==========================================================================
-   COTIZADOR PDV — Lógica de la aplicación
-   Organización del archivo:
-     1. Almacenamiento (localStorage)
-     2. Configuración de costos (valores por defecto + CRUD de escalas)
-     3. Motor de cálculo de cotizaciones
-     4. Formulario "Nueva cotización" (UI)
-     5. Resultado de la cotización (render + PDF + impresión)
-     6. Historial de cotizaciones (UI + filtros)
-     7. Navegación, modales, toasts y arranque de la app
+   COTIZADOR DE AUDITORÍAS EN PDV
+   app.js — Lógica de la aplicación
+   --------------------------------------------------------------------------
+   Este archivo está dividido en módulos (secciones) claramente separados:
+     1. STORAGE      -> lectura/escritura en localStorage (config e historial)
+     2. CALCULO      -> toda la lógica de cotización (fórmulas)
+     3. VALIDACION   -> validaciones de formulario y de configuración
+     4. UI - NAVEGACION
+     5. UI - NUEVA COTIZACION (formulario + resultado)
+     6. UI - CONFIGURACION (escalas y parámetros)
+     7. UI - HISTORIAL
+     8. PDF (jsPDF)
+     9. INICIALIZACION
    ========================================================================== */
 
-(function () {
-  "use strict";
+/* ==========================================================================
+   1. STORAGE
+   ========================================================================== */
 
-  /* ========================================================================
-     1. ALMACENAMIENTO (localStorage)
-     ======================================================================== */
+const STORAGE_KEYS = {
+  CONFIG: 'pdv_cotizador_config_v1',
+  HISTORY: 'pdv_cotizador_historial_v1',
+  COUNTER: 'pdv_cotizador_contador_v1',
+};
 
-  const STORAGE_KEYS = {
-    CONFIG: "pdv_cotizador_config_v1",
-    HISTORIAL: "pdv_cotizador_historial_v1",
-    CONTADOR: "pdv_cotizador_contador_v1",
+/**
+ * Valores de ejemplo. NO SON PRECIOS REALES DE MERCADO.
+ * El usuario debe editarlos desde "Configuración de costos".
+ */
+function getDefaultConfig() {
+  return {
+    // --- Escalas de precio según cantidad de PDV (VALORES DE EJEMPLO) ---
+    // "productsIncluidos" = cantidad de productos por PDV que ya están incluidos
+    // en el precio base de ESA escala (cada escala puede tener su propio valor).
+    // Cada escala define 3 precios: mínimo, recomendado y máximo, para poder
+    // ofrecer un rango comercial en vez de un único número fijo.
+    scales: [
+      { id: cryptoId(), min: 1, max: 10, precioMinimo: 9000000, precioRecomendado: 10000000, precioMaximo: 12000000, productsIncluidos: 50 },
+      { id: cryptoId(), min: 11, max: 15, precioMinimo: 12500000, precioRecomendado: 14000000, precioMaximo: 16500000, productsIncluidos: 50 },
+      { id: cryptoId(), min: 16, max: 20, precioMinimo: 16000000, precioRecomendado: 18000000, precioMaximo: 21000000, productsIncluidos: 50 },
+      { id: cryptoId(), min: 21, max: 30, precioMinimo: 22000000, precioRecomendado: 25000000, precioMaximo: 29000000, productsIncluidos: 50 },
+    ],
+    // 'cerrado' = precio fijo por escala | 'progresivo' = interpolación entre escalas
+    pricingMode: 'cerrado',
+
+    // --- Productos ---
+    // Valor de respaldo (fallback) usado únicamente si una escala antigua no
+    // tiene su propio "productsIncluidos" configurado (compatibilidad).
+    productsIncludedInBase: 50,
+    extraProductSurcharge: 5000, // Gs. por cada producto adicional, por PDV, por ciclo
+
+    // --- Zona ---
+    surchargeGranAsuncionPercent: 5, // % sobre el subtotal recurrente
+    surchargeInteriorPercent: 15, // % sobre el subtotal recurrente
+
+    // --- Auditores ---
+    pdvPerAuditor: 5, // capacidad de PDV que cubre 1 auditor (para modo automático)
+
+    // --- Costos operativos ---
+    costoTraslado: 150000, // Gs. por auditor, por viaje (ciclo)
+    viaticoPorAuditorPorDia: 100000, // Gs.
+    alojamientoPorAuditorPorNoche: 180000, // Gs.
+    costoVisitaAdicional: 200000, // Gs. por PDV, por visita adicional, por ciclo
+
+    // --- Servicios adicionales (cargo único) ---
+    costoEvidenciaFotografica: 300000,
+    costoInformeFinal: 500000,
+    costoDashboard: 800000,
+    costoPresentacion: 400000,
+    // Modo de costeo de cada servicio: 'fijo' | 'horas' | 'fijo_mas_horas'.
+    // 'fijo' = se cobra solo el precio fijo de arriba (comportamiento clásico).
+    // 'horas' = se cobra según las horas de la tarea de oficina correspondiente.
+    // 'fijo_mas_horas' = precio fijo + horas (para no perder el precio base
+    // técnico/de diseño, sumado al trabajo real de análisis/armado).
+    modoCosteoInforme: 'fijo',
+    modoCosteoDashboard: 'fijo',
+    modoCosteoPresentacion: 'fijo',
+
+    // --- Comerciales ---
+    // margenComercialPercent queda como valor legado (compatibilidad); el
+    // cálculo real usa margenRecomendadoPercent (ver migrarConfiguracion).
+    margenComercialPercent: 20,
+    ivaPercent: 10,
+    descuentoMaximoPercent: 15,
+
+    // --- Costo interno vs. precio comercial (VALORES DE EJEMPLO) ---
+    gastosAdministrativosPercent: 5, // % de gastos administrativos, sobre el costo interno
+    contingenciaPercent: 5, // % de contingencia/imprevistos, sobre el costo interno
+    margenMinimoPercent: 10, // % de margen para el precio MÍNIMO del rango comercial
+    margenRecomendadoPercent: 20, // % de margen para el precio RECOMENDADO (objetivo)
+    margenMaximoPercent: 35, // % de margen para el precio MÁXIMO sugerido
+
+    // --- Parámetros opcionales del proyecto (VALORES DE EJEMPLO) ---
+    // Todos son ajustes que se activan/desactivan por cotización (checkbox o
+    // selección), pero cuyo COSTO se configura acá.
+    complejidadMediaPercent: 15, // % de tiempo adicional si el relevamiento es de complejidad media
+    complejidadAltaPercent: 30, // % de tiempo adicional si es de complejidad alta
+    capacitacionInicialHoras: 4, // horas de capacitación inicial al equipo de campo (cargo único)
+    supervisionCampoHorasPorCiclo: 1, // horas de supervisión en campo, por ciclo
+    aplicarRevisitasPercent: false, // si se activa, se suma este % a las horas de campo
+    revisitasPercent: 5,
+    aplicarAusenciasPercent: false, // si se activa, se suma este % a las horas de campo (PDV cerrados, etc.)
+    ausenciasPercent: 5,
+    correccionesRondasIncluidas: 1, // rondas de corrección del informe incluidas sin costo extra
+    horasPorRondaCorreccionExtra: 2, // horas del analista por cada ronda de corrección adicional
+    reunionesIncluidas: 1, // reuniones con el cliente incluidas sin costo extra
+    horasPorReunionExtra: 1.5, // horas del coordinador por cada reunión adicional
+    aplicarGastoTelefonia: false,
+    gastoTelefoniaPorRelevador: 50000, // Gs. por relevador/shopper asignado al proyecto
+    aplicarCostoHerramientas: false,
+    costoHerramientasLicencias: 200000, // Gs., cargo único del proyecto
+    aplicarOtrosGastosOperativos: false,
+    otrosGastosOperativosMonto: 0, // Gs., cargo único adicional libre
+    recargoUrgenciaPercent: 15, // % adicional sobre el costo con gastos, si el proyecto es urgente
+
+    // --- Mano de obra (horas hombre), con cargas sociales (VALORES DE EJEMPLO) ---
+    costoPorHoraHombre: 25000, // Gs. por hora de trabajo del auditor, sin cargas
+    horasPorVisitaPdv: 2, // [OBSOLETO] se mantiene solo como respaldo si faltan los tiempos detallados de abajo
+    aguinaldoPercent: 8.33, // % legal del aguinaldo (equivalente a 1/12 del salario)
+    ipsPatronalPercent: 16.5, // % de aporte patronal al IPS
+    otrosCostosLaboralesPercent: 0, // % adicional de cargas (seguros, ropa de trabajo, etc.)
+    recargoNocturnoPercent: 30, // % de recargo sobre la hora cargada, si se marca "trabajo nocturno"
+    recargoFinDeSemanaPercent: 50, // % de recargo sobre la hora cargada, si se marca "fin de semana / feriado"
+
+    // --- Auditoría en PDV: tiempos de relevamiento (VALORES DE EJEMPLO, en minutos) ---
+    auditPrepMinutos: 10, // ingreso, presentación y preparación, por PDV
+    auditMinutosPorProducto: 5, // relevar cada producto
+    auditMinutosEvidenciaPorProducto: 2, // fotografiar/evidenciar cada producto
+    auditMinutosCierreFormulario: 10, // completar y enviar el formulario del PDV
+    auditMinutosEsperaPromedio: 15, // espera promedio dentro del PDV
+    auditMinutosTrasladoEntrePdv: 30, // traslado promedio entre un PDV y el siguiente
+    auditJornadaEfectivaHoras: 7, // horas efectivas de trabajo de campo, por relevador, por día
+
+    // --- Mystery Shopper (VALORES DE EJEMPLO, basados en costeo de referencia) ---
+    msTrasladoPorVisitaHoras: 0.5, // [OBSOLETO] respaldo si faltan los minutos detallados de abajo
+    msEsperaInteraccionHoras: 0.5, // [OBSOLETO] respaldo si faltan los minutos detallados de abajo
+    msCargaInformeHoras: 0.25, // [OBSOLETO] respaldo si faltan los minutos detallados de abajo
+    msJornadaEfectivaHorasDia: 6, // horas efectivas de campo por día, por shopper
+    msTiempoGestionInteraccionHoras: 0.4, // [OBSOLETO] respaldo de msMinutosGestionRemota
+    msHorasDisenoGuion: 6, // horas de diseño de guion y briefing (tarea única, no por visita)
+    msHorasAnalisisInforme: 8, // horas de análisis y armado de informe final (tarea única)
+    msCostoHoraShopper: 22000, // Gs. por hora de trabajo del mystery shopper / relevador
+    msCostoHoraAnalista: 48000, // Gs. por hora de trabajo del analista / coordinador
+    msViaticoPorVisita: 35000, // Gs. de viático de movilidad, por visita presencial
+
+    // --- Mystery Shopper: "Tiempo del relevador" detallado (VALORES DE EJEMPLO, en minutos) ---
+    msMinutosTraslado: 30, // traslado por visita (ida y vuelta)
+    msMinutosEspera: 20, // espera dentro del comercio
+    msMinutosInteraccion: 15, // interacción con el asesor/vendedor
+    msMinutosPorProductoServicio: 3, // relevar cada producto o servicio consultado
+    msMinutosCargaEvidencia: 10, // cargar fotos/evidencias de la visita
+    msMinutosInformeVisita: 15, // completar el informe de esa visita puntual
+    msMinutosGestionRemota: 24, // gestión por cada interacción remota (WhatsApp/Redes/Web)
+
+    // --- Mano de obra de oficina: perfiles (VALORES DE EJEMPLO) ---
+    // Cada perfil tiene su propio costo por hora y sus propias cargas sociales.
+    officeProfiles: [
+      { id: 'perfil_coordinador', nombre: 'Coordinador de proyecto', costoPorHora: 35000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
+      { id: 'perfil_analista', nombre: 'Analista', costoPorHora: 30000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
+      { id: 'perfil_disenador', nombre: 'Diseñador de presentación', costoPorHora: 28000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
+      { id: 'perfil_dashboard', nombre: 'Especialista en dashboard', costoPorHora: 32000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
+      { id: 'perfil_calidad', nombre: 'Control de calidad', costoPorHora: 27000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
+    ],
+
+    // --- Mano de obra de oficina: tareas internas (VALORES DE EJEMPLO) ---
+    // "tipo" es un identificador interno estable (no se muestra ni se edita)
+    // que usan algunos cálculos especiales (servicios adicionales); "nombre"
+    // sí es editable libremente por el usuario. "condicionA": null = la tarea
+    // siempre se calcula; o el nombre de un checkbox de la cotización que la
+    // habilita (por ahora: requiresInforme / requiresDashboard / requiresPresentacion).
+    officeTasks: [
+      { id: cryptoId(), tipo: 'prep_coordinacion', nombre: 'Preparación y coordinación del proyecto', perfilId: 'perfil_coordinador', horasBase: 4, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 1, revisionesIncluidas: 0, aplicaA: 'ambos', condicionA: null, activa: true },
+      { id: cryptoId(), tipo: 'diseno_cuestionario', nombre: 'Diseño del cuestionario o formulario', perfilId: 'perfil_coordinador', horasBase: 3, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 0, revisionesIncluidas: 1, aplicaA: 'ambos', condicionA: null, activa: true },
+      { id: cryptoId(), tipo: 'capacitacion', nombre: 'Capacitación o briefing de relevadores', perfilId: 'perfil_coordinador', horasBase: 2, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 0.5, revisionesIncluidas: 0, aplicaA: 'ambos', condicionA: null, activa: true },
+      { id: cryptoId(), tipo: 'limpieza_datos', nombre: 'Limpieza y consolidación de datos', perfilId: 'perfil_analista', horasBase: 2, horasPorPdv: 0.05, horasPorCada100Productos: 1, horasPorCiclo: 0.5, revisionesIncluidas: 0, aplicaA: 'ambos', condicionA: null, activa: true },
+      { id: cryptoId(), tipo: 'analisis_resultados', nombre: 'Análisis de resultados', perfilId: 'perfil_analista', horasBase: 4, horasPorPdv: 0.05, horasPorCada100Productos: 1.5, horasPorCiclo: 1, revisionesIncluidas: 0, aplicaA: 'ambos', condicionA: null, activa: true },
+      { id: cryptoId(), tipo: 'control_calidad', nombre: 'Control de calidad', perfilId: 'perfil_calidad', horasBase: 2, horasPorPdv: 0.02, horasPorCada100Productos: 0, horasPorCiclo: 0.5, revisionesIncluidas: 0, aplicaA: 'ambos', condicionA: null, activa: true },
+      { id: cryptoId(), tipo: 'elaboracion_informe', nombre: 'Elaboración de informe', perfilId: 'perfil_analista', horasBase: 4, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 1, revisionesIncluidas: 1, aplicaA: 'ambos', condicionA: 'requiresInforme', activa: true },
+      { id: cryptoId(), tipo: 'elaboracion_presentacion', nombre: 'Elaboración de presentación', perfilId: 'perfil_disenador', horasBase: 3, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 0, revisionesIncluidas: 1, aplicaA: 'ambos', condicionA: 'requiresPresentacion', activa: true },
+      { id: cryptoId(), tipo: 'dashboard', nombre: 'Creación o actualización de dashboard', perfilId: 'perfil_dashboard', horasBase: 5, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 0, revisionesIncluidas: 0, aplicaA: 'ambos', condicionA: 'requiresDashboard', activa: true },
+      { id: cryptoId(), tipo: 'reunion_presentacion', nombre: 'Reunión de presentación al cliente', perfilId: 'perfil_coordinador', horasBase: 1.5, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 0, revisionesIncluidas: 0, aplicaA: 'ambos', condicionA: null, activa: true },
+      { id: cryptoId(), tipo: 'correcciones', nombre: 'Correcciones solicitadas por el cliente', perfilId: 'perfil_analista', horasBase: 2, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 0, revisionesIncluidas: 1, aplicaA: 'ambos', condicionA: null, activa: true },
+    ],
+
+    moneda: 'PYG',
   };
+}
 
-  const Store = {
-    get(key, fallback) {
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw === null) return fallback;
-        return JSON.parse(raw);
-      } catch (e) {
-        console.error("Error leyendo localStorage:", key, e);
-        return fallback;
-      }
-    },
-    set(key, value) {
-      try {
-        localStorage.setItem(key, JSON.stringify(value));
-        return true;
-      } catch (e) {
-        console.error("Error guardando en localStorage:", key, e);
-        return false;
-      }
-    },
-    remove(key) {
-      localStorage.removeItem(key);
-    },
-  };
+/**
+ * Migración de configuración (compatibilidad hacia adelante).
+ * Recibe una configuración ya guardada (posiblemente antigua, sin los campos
+ * nuevos) y devuelve una copia completa: conserva TODOS los valores que el
+ * usuario ya haya editado, y solo agrega los campos nuevos que falten, con
+ * su valor de ejemplo por defecto. Nunca sobreescribe un valor existente.
+ */
+function migrarConfiguracion(config) {
+  const defaults = getDefaultConfig();
+  const migrada = { ...config };
+  let huboCambios = false;
 
-  /* ========================================================================
-     TIPOS DE SERVICIO
-     Para agregar un nuevo tipo de servicio (ej: "Relevamiento de precios"),
-     alcanza con: 1) agregar una entrada acá, y 2) agregar su función de
-     valores de ejemplo dentro de getDefaultConfigForTipo(). El formulario y
-     la sección de Configuración de costos se arman solos a partir de esta lista.
-     ======================================================================== */
-
-  const SERVICE_TYPES = [
-    { value: "auditoria_pdv", label: "Auditoría en punto de venta" },
-    { value: "mystery_shopper", label: "Mystery Shopper (cliente incógnito)" },
-  ];
-
-  function getServiceTypeLabel(value) {
-    const t = SERVICE_TYPES.find((s) => s.value === value);
-    return t ? t.label : value;
+  // Migración especial: si el usuario ya tenía "margenComercialPercent"
+  // editado (versión anterior del sistema) pero todavía no existe el nuevo
+  // "margenRecomendadoPercent", se hereda ese valor para no perder el ajuste
+  // que ya había hecho.
+  if (migrada.margenRecomendadoPercent === undefined && migrada.margenComercialPercent !== undefined) {
+    migrada.margenRecomendadoPercent = migrada.margenComercialPercent;
+    huboCambios = true;
   }
 
-  /* ========================================================================
-     2. CONFIGURACIÓN DE COSTOS
-     Cada tipo de servicio tiene su propio set de tarifas, completamente
-     independiente: escalas de precio, recargos, viáticos, márgenes, etc.
-     ======================================================================== */
-
-  // VALORES DE EJEMPLO — reemplazar por tarifas comerciales reales.
-  function getDefaultConfigForTipo(tipo) {
-    if (tipo === "mystery_shopper") {
-      return {
-        modalidadPrecio: "cerrado", // "cerrado" | "progresivo"
-        escalas: [
-          { id: "ms_e1", min: 1, max: 10, precioBase: 6000000 },
-          { id: "ms_e2", min: 11, max: 15, precioBase: 8500000 },
-          { id: "ms_e3", min: 16, max: 20, precioBase: 11000000 },
-          { id: "ms_e4", min: 21, max: 30, precioBase: 15500000 },
-        ],
-        // Puntos / criterios que se marcan como checklist en el formulario en
-        // lugar del campo numérico de "productos". Si esta lista está vacía,
-        // el formulario vuelve a mostrar el campo numérico manual.
-        puntosEvaluacion: [
-          { id: "ms_p1", nombre: "Atención al cliente" },
-          { id: "ms_p2", nombre: "Tiempo de espera" },
-          { id: "ms_p3", nombre: "Orden y limpieza del local" },
-          { id: "ms_p4", nombre: "Cumplimiento de uniforme y protocolo" },
-          { id: "ms_p5", nombre: "Disponibilidad de stock" },
-          { id: "ms_p6", nombre: "Precio correcto en góndola" },
-          { id: "ms_p7", nombre: "Conocimiento del producto" },
-          { id: "ms_p8", nombre: "Amabilidad y trato" },
-        ],
-        productosIncluidos: 8, // criterios de evaluación incluidos por visita
-        recargoProductoAdicional: 8000,
-        pdvPorAuditor: 8,
-        costoVisitaAdicional: 60000,
-        recargoGranAsuncionPct: 8,
-        recargoInteriorPct: 20,
-        costoTrasladoPorAuditorRonda: 120000,
-        viaticoAuditorDia: 80000,
-        alojamientoAuditorNoche: 180000,
-        evidenciaFotograficaPorPDV: 15000,
-        informeFinal: 700000,
-        dashboard: 1000000,
-        presentacionResultados: 500000,
-        margenComercialPct: 20,
-        ivaPct: 10,
-        descuentoMaximoPct: 15,
-        moneda: "PYG",
-      };
+  Object.keys(defaults).forEach((clave) => {
+    if (migrada[clave] === undefined) {
+      migrada[clave] = defaults[clave];
+      huboCambios = true;
     }
-    // "auditoria_pdv" y cualquier tipo no reconocido usan estos valores por defecto.
+  });
+
+  // Las escalas son un array: si faltara por completo, se usa el default.
+  if (!Array.isArray(migrada.scales) || migrada.scales.length === 0) {
+    migrada.scales = defaults.scales;
+    huboCambios = true;
+  } else {
+    // Formato viejo (una sola escala de "price"): se migra a 3 precios
+    // (mínimo, recomendado, máximo). Si el usuario no tenía rango, se
+    // usa el mismo valor para los 3, así el cálculo no cambia hasta que
+    // decida editar el rango manualmente. También se completa
+    // "productsIncluidos" si faltara en una escala vieja.
+    migrada.scales = migrada.scales.map((s) => {
+      const escala = { ...s };
+      if (escala.precioRecomendado === undefined) {
+        escala.precioRecomendado = escala.price !== undefined ? escala.price : 0;
+        huboCambios = true;
+      }
+      if (escala.precioMinimo === undefined) {
+        escala.precioMinimo = escala.precioRecomendado;
+        huboCambios = true;
+      }
+      if (escala.precioMaximo === undefined) {
+        escala.precioMaximo = escala.precioRecomendado;
+        huboCambios = true;
+      }
+      if (escala.productsIncluidos === undefined) {
+        escala.productsIncluidos = Number(migrada.productsIncludedInBase) || 50;
+        huboCambios = true;
+      }
+      delete escala.price; // campo viejo, reemplazado por precioRecomendado
+      return escala;
+    });
+  }
+
+  // Perfiles y tareas de mano de obra de oficina: si faltaran por completo
+  // (configuración guardada antes de esta función), se cargan los de ejemplo.
+  // Si el usuario ya los editó/vació intencionalmente, se respeta tal cual.
+  if (!Array.isArray(migrada.officeProfiles)) {
+    migrada.officeProfiles = defaults.officeProfiles;
+    huboCambios = true;
+  }
+  if (!Array.isArray(migrada.officeTasks)) {
+    migrada.officeTasks = defaults.officeTasks;
+    huboCambios = true;
+  }
+
+  return { config: migrada, huboCambios };
+}
+
+function cryptoId() {
+  return 'id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
+function getConfig() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CONFIG);
+    if (!raw) {
+      const def = getDefaultConfig();
+      saveConfig(def);
+      return def;
+    }
+    const guardada = JSON.parse(raw);
+    const { config: migrada, huboCambios } = migrarConfiguracion(guardada);
+    if (huboCambios) {
+      saveConfig(migrada); // persiste los campos nuevos sin tocar los ya editados por el usuario
+    }
+    return migrada;
+  } catch (e) {
+    console.error('Error leyendo configuración, restaurando valores de ejemplo.', e);
+    const def = getDefaultConfig();
+    saveConfig(def);
+    return def;
+  }
+}
+
+function saveConfig(config) {
+  localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(config));
+}
+
+function getHistory() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.HISTORY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.error('Error leyendo historial.', e);
+    return [];
+  }
+}
+
+function saveHistory(list) {
+  localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(list));
+}
+
+function getNextQuoteNumber() {
+  const year = new Date().getFullYear();
+  let counterData = {};
+  try {
+    counterData = JSON.parse(localStorage.getItem(STORAGE_KEYS.COUNTER)) || {};
+  } catch (e) {
+    counterData = {};
+  }
+  const current = (counterData[year] || 0) + 1;
+  counterData[year] = current;
+  localStorage.setItem(STORAGE_KEYS.COUNTER, JSON.stringify(counterData));
+  return `COT-${year}-${String(current).padStart(3, '0')}`;
+}
+
+/* ==========================================================================
+   2. CALCULO
+   ========================================================================== */
+
+/**
+ * Devuelve la cantidad de "ciclos" de servicio según frecuencia y duración.
+ * única      -> 1 ciclo total
+ * semanal    -> ~4.33 ciclos por mes
+ * quincenal  -> 2 ciclos por mes
+ * mensual    -> 1 ciclo por mes
+ */
+function calcularCiclos(frecuencia, duracionMeses) {
+  const meses = Math.max(1, Number(duracionMeses) || 1);
+  switch (frecuencia) {
+    case 'unica':
+      return 1;
+    case 'semanal':
+      return Math.max(1, Math.round(meses * 4.33));
+    case 'quincenal':
+      return Math.max(1, Math.round(meses * 2));
+    case 'mensual':
+      return Math.max(1, meses);
+    default:
+      return 1;
+  }
+}
+
+/**
+ * Ordena las escalas por "min" ascendente (no muta el arreglo original).
+ */
+function escalasOrdenadas(scales) {
+  return [...scales].sort((a, b) => a.min - b.min);
+}
+
+// Etiquetas legibles para cada zona (se usan en toda la aplicación).
+const ZONA_LABELS = {
+  asuncion: 'Asunción',
+  granAsuncion: 'Gran Asunción',
+  interior: 'Interior',
+  combinada: 'Combinada (Asunción + Gran Asunción + Interior)',
+};
+
+/**
+ * Devuelve la cantidad de productos incluidos configurada para una escala.
+ * Si la escala no tiene el campo (configuraciones antiguas), usa el valor
+ * de respaldo general de la configuración.
+ */
+function productosIncluidosDeEscala(scale, config) {
+  if (scale && scale.productsIncluidos !== undefined && scale.productsIncluidos !== null && scale.productsIncluidos !== '') {
+    return Number(scale.productsIncluidos) || 0;
+  }
+  return Number(config.productsIncludedInBase) || 0;
+}
+
+/**
+ * Busca el precio base para una cantidad de PDV dada, según el modo de precio.
+ * Retorna { price, scaleIndex, isCustom, scale, productsIncluidos }
+ */
+/**
+ * Interpola un precio (mínimo, recomendado o máximo) entre el valor de la
+ * escala anterior y el de la escala actual, según la posición de "pdvCount"
+ * dentro del rango de la escala actual.
+ */
+function calcularPrecioInterpolado(scales, idx, pdvCount, campoPrecio) {
+  const scale = scales[idx];
+  const prev = scales[idx - 1];
+  const prevMax = prev.max;
+  const prevPrecio = Number(prev[campoPrecio]) || 0;
+  const precioEscala = Number(scale[campoPrecio]) || 0;
+  const ratio = (pdvCount - prevMax) / (scale.max - prevMax);
+  return prevPrecio + ratio * (precioEscala - prevPrecio);
+}
+
+function obtenerPrecioBasePorPDV(pdvCount, config) {
+  const scales = escalasOrdenadas(config.scales);
+  if (scales.length === 0) {
+    const productsIncluidos = Number(config.productsIncludedInBase) || 0;
     return {
-      modalidadPrecio: "cerrado", // "cerrado" | "progresivo"
-      escalas: [
-        { id: "e1", min: 1, max: 10, precioBase: 10000000 },
-        { id: "e2", min: 11, max: 15, precioBase: 14000000 },
-        { id: "e3", min: 16, max: 20, precioBase: 18000000 },
-        { id: "e4", min: 21, max: 30, precioBase: 25000000 },
-      ],
-      // Auditoría PDV no usa checklist de puntos: se deja vacío a propósito,
-      // por lo que el formulario muestra el campo numérico manual de productos.
-      puntosEvaluacion: [],
-      productosIncluidos: 10,
-      recargoProductoAdicional: 15000,
-      pdvPorAuditor: 5,
-      costoVisitaAdicional: 80000,
-      recargoGranAsuncionPct: 8,
-      recargoInteriorPct: 20,
-      costoTrasladoPorAuditorRonda: 150000,
-      viaticoAuditorDia: 100000,
-      alojamientoAuditorNoche: 180000,
-      evidenciaFotograficaPorPDV: 20000,
-      informeFinal: 800000,
-      dashboard: 1200000,
-      presentacionResultados: 600000,
-      margenComercialPct: 20,
-      ivaPct: 10,
-      descuentoMaximoPct: 15,
-      moneda: "PYG",
+      price: 0, priceMin: 0, priceMax: 0,
+      scaleIndex: -1, isCustom: true, scale: null, productsIncluidos,
     };
   }
 
-  function getDefaultConfigs() {
-    const result = {};
-    SERVICE_TYPES.forEach((t) => (result[t.value] = getDefaultConfigForTipo(t.value)));
-    return result;
-  }
+  const maxScale = scales[scales.length - 1];
 
-  function loadConfigs() {
-    const saved = Store.get(STORAGE_KEYS.CONFIG, null);
-    const defaults = getDefaultConfigs();
-    if (!saved || typeof saved !== "object") {
-      Store.set(STORAGE_KEYS.CONFIG, defaults);
-      return defaults;
-    }
-    // Merge por tipo, tolerando configuraciones guardadas con versiones
-    // anteriores (sin algún campo nuevo, o sin un tipo de servicio nuevo).
-    const merged = {};
-    SERVICE_TYPES.forEach((t) => {
-      const def = defaults[t.value];
-      const savedForType = saved[t.value];
-      merged[t.value] = savedForType
-        ? Object.assign({}, def, savedForType, {
-            escalas: savedForType.escalas && savedForType.escalas.length ? savedForType.escalas : def.escalas,
-            puntosEvaluacion: Array.isArray(savedForType.puntosEvaluacion) ? savedForType.puntosEvaluacion : def.puntosEvaluacion,
-          })
-        : def;
-    });
-    return merged;
-  }
-
-  function saveConfigs(configs) {
-    Store.set(STORAGE_KEYS.CONFIG, configs);
-  }
-
-  let CONFIGS = loadConfigs();
-
-  function getConfig(tipo) {
-    return CONFIGS[tipo] || (CONFIGS[tipo] = getDefaultConfigForTipo(tipo));
-  }
-
-  /* ========================================================================
-     UTILIDADES GENERALES
-     ======================================================================== */
-
-  function formatGs(value) {
-    const n = Math.round(Number(value) || 0);
-    return "Gs. " + n.toLocaleString("es-PY");
-  }
-
-  function uid(prefix) {
-    return (prefix || "id") + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  }
-
-  function todayISO() {
-    const d = new Date();
-    return d.toISOString().slice(0, 10);
-  }
-
-  function formatDateDisplay(iso) {
-    if (!iso) return "-";
-    const [y, m, d] = iso.split("-");
-    return `${d}/${m}/${y}`;
-  }
-
-  function showToast(message, type) {
-    const container = document.getElementById("toastContainer");
-    const toast = document.createElement("div");
-    toast.className = "toast" + (type ? " toast-" + type : "");
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(() => {
-      toast.style.opacity = "0";
-      toast.style.transition = "opacity .3s ease";
-      setTimeout(() => toast.remove(), 300);
-    }, 3200);
-  }
-
-  function escapeHtml(str) {
-    const div = document.createElement("div");
-    div.textContent = str == null ? "" : String(str);
-    return div.innerHTML;
-  }
-
-  /* ========================================================================
-     MODAL GENÉRICO
-     ======================================================================== */
-
-  const Modal = {
-    overlay: null,
-    box: null,
-    content: null,
-    init() {
-      this.overlay = document.getElementById("modalOverlay");
-      this.box = document.getElementById("modalBox");
-      this.content = document.getElementById("modalContent");
-      document.getElementById("modalClose").addEventListener("click", () => this.close());
-      this.overlay.addEventListener("click", (e) => {
-        if (e.target === this.overlay) this.close();
-      });
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") this.close();
-      });
-    },
-    open(html) {
-      this.content.innerHTML = html;
-      this.overlay.hidden = false;
-    },
-    close() {
-      this.overlay.hidden = true;
-      this.content.innerHTML = "";
-    },
-    confirm(message, onConfirm, opts) {
-      opts = opts || {};
-      const html = `
-        <h3>${escapeHtml(opts.title || "Confirmar acción")}</h3>
-        <p style="color:var(--color-text-muted); font-size:0.9rem;">${escapeHtml(message)}</p>
-        <div class="confirm-actions">
-          <button class="btn btn-ghost" id="modalCancelBtn">Cancelar</button>
-          <button class="btn ${opts.danger ? "btn-danger-outline" : "btn-primary"}" id="modalConfirmBtn">${escapeHtml(opts.confirmLabel || "Confirmar")}</button>
-        </div>`;
-      this.open(html);
-      document.getElementById("modalCancelBtn").addEventListener("click", () => this.close());
-      document.getElementById("modalConfirmBtn").addEventListener("click", () => {
-        this.close();
-        onConfirm();
-      });
-    },
-  };
-
-  /* ========================================================================
-     3. MOTOR DE CÁLCULO DE COTIZACIONES
-     ======================================================================== */
-
-  const FRECUENCIA_PERIODOS_POR_MES = {
-    unica: 0, // se maneja aparte: siempre 1 ronda total
-    semanal: 4,
-    quincenal: 2,
-    mensual: 1,
-  };
-
-  function getEscalasOrdenadas(cfg) {
-    return [...cfg.escalas].sort((a, b) => a.min - b.min);
-  }
-
-  // Valida que las escalas no se superpongan y no dejen huecos.
-  function validarEscalas(cfg) {
-    const escalas = getEscalasOrdenadas(cfg);
-    const problemas = [];
-    for (let i = 0; i < escalas.length; i++) {
-      const e = escalas[i];
-      if (e.min > e.max) {
-        problemas.push(`La escala ${e.min}-${e.max} tiene un mínimo mayor al máximo.`);
-      }
-      if (i > 0) {
-        const prev = escalas[i - 1];
-        if (e.min <= prev.max) {
-          problemas.push(`Las escalas ${prev.min}-${prev.max} y ${e.min}-${e.max} se superponen.`);
-        } else if (e.min > prev.max + 1) {
-          problemas.push(`Existe un hueco sin cubrir entre ${prev.max} y ${e.min} PDV.`);
-        }
-      }
-    }
-    return problemas;
-  }
-
-  // Determina el precio base para una cantidad de PDV, según la modalidad configurada.
-  // Devuelve { precioBase, personalizada, escalaUsada }
-  function calcularPrecioPorEscala(cfg, cantidadPDV) {
-    const escalas = getEscalasOrdenadas(cfg);
-    if (!escalas.length) {
-      return { precioBase: 0, personalizada: true, escalaUsada: null };
-    }
-
-    const ultima = escalas[escalas.length - 1];
-
-    // Cantidad dentro de alguna escala definida.
-    const escalaExacta = escalas.find((e) => cantidadPDV >= e.min && cantidadPDV <= e.max);
-
-    if (escalaExacta && cfg.modalidadPrecio === "cerrado") {
-      return { precioBase: escalaExacta.precioBase, personalizada: false, escalaUsada: escalaExacta };
-    }
-
-    if (cfg.modalidadPrecio === "progresivo") {
-      // Anclas: (max de cada escala, precio de esa escala). Interpolamos entre
-      // el ancla anterior y la actual cuando el PDV cae dentro de una escala
-      // posterior a la primera; dentro de la primera escala el precio es plano.
-      if (cantidadPDV <= escalas[0].max) {
-        return { precioBase: escalas[0].precioBase, personalizada: false, escalaUsada: escalas[0] };
-      }
-      for (let i = 1; i < escalas.length; i++) {
-        const prev = escalas[i - 1];
-        const curr = escalas[i];
-        if (cantidadPDV <= curr.max) {
-          const rango = curr.max - prev.max;
-          const delta = curr.precioBase - prev.precioBase;
-          const avance = cantidadPDV - prev.max;
-          const precio = rango > 0 ? prev.precioBase + (delta * avance) / rango : curr.precioBase;
-          return { precioBase: precio, personalizada: false, escalaUsada: curr };
-        }
-      }
-      // Supera la última escala: extrapolar usando la pendiente entre las
-      // dos últimas anclas, marcando el resultado como personalizado/estimado.
-      if (escalas.length >= 2) {
-        const prev = escalas[escalas.length - 2];
-        const curr = escalas[escalas.length - 1];
-        const rango = curr.max - prev.max;
-        const delta = curr.precioBase - prev.precioBase;
-        const pendiente = rango > 0 ? delta / rango : 0;
-        const avance = cantidadPDV - curr.max;
-        const precio = curr.precioBase + pendiente * avance;
-        return { precioBase: precio, personalizada: true, escalaUsada: curr };
-      }
-      return { precioBase: ultima.precioBase, personalizada: true, escalaUsada: ultima };
-    }
-
-    // Modalidad "cerrado" pero la cantidad supera la última escala.
-    if (cantidadPDV > ultima.max) {
-      return { precioBase: ultima.precioBase, personalizada: true, escalaUsada: ultima };
-    }
-
-    // No debería llegar acá si las escalas no tienen huecos, pero por
-    // seguridad devolvemos la escala más cercana.
-    return { precioBase: ultima.precioBase, personalizada: true, escalaUsada: ultima };
-  }
-
-  function calcularCantidadAuditores(cfg, cantidadPDV) {
-    const porAuditor = Math.max(1, Number(cfg.pdvPorAuditor) || 1);
-    return Math.max(1, Math.ceil(cantidadPDV / porAuditor));
-  }
-
-  // Función principal: recibe los datos del formulario + configuración y
-  // devuelve un objeto completo con el desglose de la cotización.
-  function calcularCotizacion(datos, cfg) {
-    const cantidadPDV = Number(datos.cantidadPDV) || 0;
-    const productosPorPDV = Number(datos.productosPorPDV) || 0;
-    const visitasPorPDV = Math.max(1, Number(datos.visitasPorPDV) || 1);
-    const duracionMeses = datos.frecuencia === "unica" ? 1 : Math.max(1, Number(datos.duracionMeses) || 1);
-
-    // --- Rondas totales del proyecto ---
-    let totalRondas;
-    if (datos.frecuencia === "unica") {
-      totalRondas = 1;
-    } else {
-      const periodosPorMes = FRECUENCIA_PERIODOS_POR_MES[datos.frecuencia] || 1;
-      totalRondas = periodosPorMes * duracionMeses;
-    }
-
-    // --- Precio base según escala ---
-    const { precioBase, personalizada, escalaUsada } = calcularPrecioPorEscala(cfg, cantidadPDV);
-    const costoBaseTotal = precioBase * totalRondas;
-
-    // --- Recargo por productos adicionales ---
-    const productosIncluidos = Number(cfg.productosIncluidos) || 0;
-    const productosExtra = Math.max(0, productosPorPDV - productosIncluidos);
-    const recargoProductos = productosExtra * (Number(cfg.recargoProductoAdicional) || 0) * cantidadPDV * totalRondas;
-
-    // --- Recargo por visitas adicionales por ronda ---
-    const visitasExtra = Math.max(0, visitasPorPDV - 1);
-    const recargoVisitas = visitasExtra * (Number(cfg.costoVisitaAdicional) || 0) * cantidadPDV * totalRondas;
-
-    // --- Cantidad de auditores ---
-    const cantidadAuditores =
-      datos.modoAuditores === "manual" && Number(datos.cantidadAuditores) > 0
-        ? Number(datos.cantidadAuditores)
-        : calcularCantidadAuditores(cfg, cantidadPDV);
-
-    // --- Recargo de zona (%) sobre el costo operativo de servicio ---
-    let recargoZonaPct = 0;
-    if (datos.zona === "gran_asuncion") recargoZonaPct = Number(cfg.recargoGranAsuncionPct) || 0;
-    if (datos.zona === "interior") recargoZonaPct = Number(cfg.recargoInteriorPct) || 0;
-
-    const subtotalServicio = costoBaseTotal + recargoProductos + recargoVisitas;
-    const recargoZona = subtotalServicio * (recargoZonaPct / 100);
-
-    // --- Traslado / viáticos / alojamiento ---
-    const costoTraslado = datos.requiereTraslado
-      ? cantidadAuditores * (Number(cfg.costoTrasladoPorAuditorRonda) || 0) * totalRondas
-      : 0;
-
-    const costoViaticos = datos.requiereViaticos
-      ? cantidadAuditores * (Number(cfg.viaticoAuditorDia) || 0) * totalRondas
-      : 0;
-
-    const costoAlojamiento = datos.requiereAlojamiento
-      ? cantidadAuditores * (Number(cfg.alojamientoAuditorNoche) || 0) * totalRondas
-      : 0;
-
-    // --- Entregables ---
-    const costoEvidencia = datos.requiereEvidencia
-      ? cantidadPDV * (Number(cfg.evidenciaFotograficaPorPDV) || 0) * totalRondas
-      : 0;
-    const costoInforme = datos.requiereInforme ? Number(cfg.informeFinal) || 0 : 0;
-    const costoDashboard = datos.requiereDashboard ? Number(cfg.dashboard) || 0 : 0;
-    const costoPresentacion = datos.requiereDashboard ? Number(cfg.presentacionResultados) || 0 : 0;
-
-    // --- Costo adicional manual ---
-    const costoAdicionalManual = Number(datos.costoAdicionalManual) || 0;
-
-    // --- Subtotal de costos operativos ---
-    const subtotalCostos =
-      subtotalServicio +
-      recargoZona +
-      costoTraslado +
-      costoViaticos +
-      costoAlojamiento +
-      costoEvidencia +
-      costoInforme +
-      costoDashboard +
-      costoPresentacion +
-      costoAdicionalManual;
-
-    // --- Margen comercial ---
-    const margenPct = Number(cfg.margenComercialPct) || 0;
-    const margenComercial = subtotalCostos * (margenPct / 100);
-    const subtotalConMargen = subtotalCostos + margenComercial;
-
-    // --- Descuento ---
-    const descuentoMaxPct = Number(cfg.descuentoMaximoPct) || 0;
-    let descuentoPct = Number(datos.descuentoPct) || 0;
-    if (descuentoPct > descuentoMaxPct) descuentoPct = descuentoMaxPct;
-    const montoDescuento = subtotalConMargen * (descuentoPct / 100);
-    const subtotalDespuesDescuento = subtotalConMargen - montoDescuento;
-
-    // --- IVA ---
-    const ivaPct = Number(cfg.ivaPct) || 0;
-    const montoIva = subtotalDespuesDescuento * (ivaPct / 100);
-
-    // --- Total ---
-    const total = subtotalDespuesDescuento + montoIva;
-
-    const totalProductosAuditar = cantidadPDV * productosPorPDV;
-    const totalVisitas = cantidadPDV * visitasPorPDV * totalRondas;
-
+  // Si supera la escala máxima -> cotización personalizada (se calcula un estimado)
+  if (pdvCount > maxScale.max) {
+    const factor = pdvCount / maxScale.max;
     return {
-      // datos de entrada relevantes para mostrar
-      cantidadPDV,
-      productosPorPDV,
-      visitasPorPDV,
-      totalRondas,
-      cantidadAuditores,
-      totalProductosAuditar,
-      totalVisitas,
-      escalaUsada,
-      personalizada,
-      // desglose de costos
-      precioBase,
-      costoBaseTotal,
-      recargoProductos,
-      recargoVisitas,
-      recargoZonaPct,
+      price: (Number(maxScale.precioRecomendado) || 0) * factor,
+      priceMin: (Number(maxScale.precioMinimo) || 0) * factor,
+      priceMax: (Number(maxScale.precioMaximo) || 0) * factor,
+      scaleIndex: scales.length - 1,
+      isCustom: true,
+      scale: maxScale,
+      productsIncluidos: productosIncluidosDeEscala(maxScale, config),
+    };
+  }
+
+  // Buscar la escala donde entra la cantidad de PDV
+  const idx = scales.findIndex((s) => pdvCount >= s.min && pdvCount <= s.max);
+
+  if (idx === -1) {
+    // Cae en un hueco entre escalas (no debería pasar si están bien configuradas).
+    const next = scales.find((s) => s.min > pdvCount);
+    const fallback = next || maxScale;
+    return {
+      price: Number(fallback.precioRecomendado) || 0,
+      priceMin: Number(fallback.precioMinimo) || 0,
+      priceMax: Number(fallback.precioMaximo) || 0,
+      scaleIndex: scales.indexOf(fallback),
+      isCustom: true,
+      scale: fallback,
+      productsIncluidos: productosIncluidosDeEscala(fallback, config),
+    };
+  }
+
+  const scale = scales[idx];
+  const productsIncluidos = productosIncluidosDeEscala(scale, config);
+
+  if (config.pricingMode === 'cerrado' || idx === 0) {
+    // Precio cerrado por escala (o primera escala, que no tiene referencia anterior)
+    return {
+      price: Number(scale.precioRecomendado) || 0,
+      priceMin: Number(scale.precioMinimo) || 0,
+      priceMax: Number(scale.precioMaximo) || 0,
+      scaleIndex: idx, isCustom: false, scale, productsIncluidos,
+    };
+  }
+
+  // Modo progresivo: cada precio (mínimo, recomendado, máximo) se interpola
+  // POR SEPARADO entre el valor de la escala anterior y el de esta escala.
+  return {
+    price: calcularPrecioInterpolado(scales, idx, pdvCount, 'precioRecomendado'),
+    priceMin: calcularPrecioInterpolado(scales, idx, pdvCount, 'precioMinimo'),
+    priceMax: calcularPrecioInterpolado(scales, idx, pdvCount, 'precioMaximo'),
+    scaleIndex: idx, isCustom: false, scale, productsIncluidos,
+  };
+}
+
+/**
+ * Calcula el "costo hora cargado" de cualquier perfil de mano de obra:
+ * costo base + aguinaldo + IPS patronal + otros costos laborales (todos %),
+ * y opcionalmente los recargos por trabajo nocturno y/o fin de semana/feriado
+ * (estos últimos SOLO si el llamador indica que corresponden).
+ */
+function calcularCostoHoraCargado(costoBasePorHora, config, opciones = {}) {
+  const base = Number(costoBasePorHora) || 0;
+  const aguinaldo = Number(config.aguinaldoPercent) || 0;
+  const ips = Number(config.ipsPatronalPercent) || 0;
+  const otros = Number(config.otrosCostosLaboralesPercent) || 0;
+
+  const costoConCargasSociales = base * (1 + (aguinaldo + ips + otros) / 100);
+
+  let factorRecargo = 1;
+  if (opciones.nocturno) factorRecargo += (Number(config.recargoNocturnoPercent) || 0) / 100;
+  if (opciones.finDeSemana) factorRecargo += (Number(config.recargoFinDeSemanaPercent) || 0) / 100;
+
+  return costoConCargasSociales * factorRecargo;
+}
+
+/**
+ * Calcula la mano de obra de OFICINA (interna): recorre la tabla de tareas
+ * configuradas, calcula las horas de cada una según su fórmula (horas base +
+ * horas por PDV/sucursal + horas por cada 100 productos + horas por ciclo),
+ * y las valoriza al costo hora cargado del perfil responsable de esa tarea.
+ *
+ * Nota importante: para evitar duplicar costos con los montos fijos de
+ * "Informe final", "Dashboard" y "Presentación" (configurados aparte), esta
+ * función NO incluye las tareas de tipo 'elaboracion_informe', 'dashboard'
+ * ni 'elaboracion_presentacion' — esas se reconciliarán con el modo de
+ * costeo de servicios adicionales (precio fijo / horas / mixto).
+ */
+/**
+ * Busca el "costo hora cargado" de un perfil de oficina por su id (por
+ * ejemplo, 'perfil_coordinador' o 'perfil_analista'). Si el perfil no existe
+ * (fue eliminado o la configuración es muy vieja), usa un costo de respaldo.
+ */
+function obtenerCostoHoraPerfilPorId(config, perfilId, costoDeRespaldo) {
+  const perfiles = Array.isArray(config.officeProfiles) ? config.officeProfiles : [];
+  const perfil = perfiles.find((p) => p.id === perfilId);
+  if (!perfil) return Number(costoDeRespaldo) || 0;
+  return calcularCostoHoraCargado(perfil.costoPorHora, {
+    aguinaldoPercent: perfil.aguinaldoPercent,
+    ipsPatronalPercent: perfil.ipsPatronalPercent,
+    otrosCostosLaboralesPercent: perfil.otrosCostosLaboralesPercent,
+  }, {});
+}
+
+/**
+ * Calcula el conjunto de "parámetros opcionales del proyecto" (complejidad,
+ * capacitación inicial, supervisión en campo, revisitas, ausencias,
+ * correcciones extra, reuniones extra, gastos fijos y urgencia). Devuelve
+ * el factor multiplicador de horas de campo y el costo adicional total,
+ * para que cada motor de cálculo (Auditoría / Mystery Shopper) lo aplique
+ * sobre sus propias horas y dotación.
+ */
+function calcularParametrosOpcionales(inputs, config, dotacion) {
+  // --- Factor multiplicador sobre las horas de campo ---
+  let factorHoras = 1;
+  if (inputs.nivelComplejidad === 'medio') factorHoras += (Number(config.complejidadMediaPercent) || 0) / 100;
+  if (inputs.nivelComplejidad === 'alto') factorHoras += (Number(config.complejidadAltaPercent) || 0) / 100;
+  if (config.aplicarRevisitasPercent) factorHoras += (Number(config.revisitasPercent) || 0) / 100;
+  if (config.aplicarAusenciasPercent) factorHoras += (Number(config.ausenciasPercent) || 0) / 100;
+
+  // --- Costos adicionales (cargo único o por ciclo) ---
+  const costoHoraCoordinador = obtenerCostoHoraPerfilPorId(config, 'perfil_coordinador', config.costoPorHoraHombre);
+  const costoHoraAnalista = obtenerCostoHoraPerfilPorId(config, 'perfil_analista', config.costoPorHoraHombre);
+
+  const costoCapacitacionInicial = inputs.requiereCapacitacionInicial
+    ? (Number(config.capacitacionInicialHoras) || 0) * costoHoraCoordinador
+    : 0;
+
+  const costoSupervisionCampo = inputs.requiereSupervisionCampo
+    ? (Number(config.supervisionCampoHorasPorCiclo) || 0) * (Number(inputs.ciclosParaSupervision) || 1) * costoHoraCoordinador
+    : 0;
+
+  const rondasIncluidas = Number(config.correccionesRondasIncluidas) || 0;
+  const rondasSolicitadas = Number(inputs.rondasCorreccionSolicitadas) || rondasIncluidas;
+  const rondasExtra = Math.max(0, rondasSolicitadas - rondasIncluidas);
+  const costoCorreccionesExtra = rondasExtra * (Number(config.horasPorRondaCorreccionExtra) || 0) * costoHoraAnalista;
+
+  const reunionesIncluidas = Number(config.reunionesIncluidas) || 0;
+  const reunionesSolicitadas = Number(inputs.reunionesSolicitadas) || reunionesIncluidas;
+  const reunionesExtra = Math.max(0, reunionesSolicitadas - reunionesIncluidas);
+  const costoReunionesExtra = reunionesExtra * (Number(config.horasPorReunionExtra) || 0) * costoHoraCoordinador;
+
+  const costoTelefonia = config.aplicarGastoTelefonia
+    ? (Number(config.gastoTelefoniaPorRelevador) || 0) * (Number(dotacion) || 1)
+    : 0;
+  const costoHerramientas = config.aplicarCostoHerramientas ? (Number(config.costoHerramientasLicencias) || 0) : 0;
+  const otrosGastosOperativos = config.aplicarOtrosGastosOperativos ? (Number(config.otrosGastosOperativosMonto) || 0) : 0;
+
+  const costoAdicionalTotal = costoCapacitacionInicial + costoSupervisionCampo + costoCorreccionesExtra
+    + costoReunionesExtra + costoTelefonia + costoHerramientas + otrosGastosOperativos;
+
+  // --- Recargo por urgencia (se aplica sobre el costo con gastos, no acá) ---
+  const recargoUrgenciaPercent = inputs.esUrgente ? (Number(config.recargoUrgenciaPercent) || 0) : 0;
+
+  return {
+    factorHoras,
+    costoCapacitacionInicial,
+    costoSupervisionCampo,
+    rondasExtra,
+    costoCorreccionesExtra,
+    reunionesExtra,
+    costoReunionesExtra,
+    costoTelefonia,
+    costoHerramientas,
+    otrosGastosOperativos,
+    costoAdicionalTotal,
+    recargoUrgenciaPercent,
+  };
+}
+
+function calcularManoObraOficina(inputs, config) {
+  const esMS = esMysteryShopper(inputs);
+  let unidadAlcance;
+  let totalProductosOficina;
+  let ciclosOficina;
+
+  if (esMS) {
+    const sucursales = Number(inputs.msSucursalesPresencial) || 0;
+    const aseguradoras = Number(inputs.msAseguradorasCount) || 0;
+    const rondas = Math.max(1, Number(inputs.msRondas) || 1);
+    unidadAlcance = sucursales + aseguradoras;
+    totalProductosOficina = (Number(inputs.msProductosPorVisita) || 0) * sucursales * rondas;
+    ciclosOficina = rondas;
+  } else {
+    const pdv = Number(inputs.pdvCount) || 0;
+    unidadAlcance = pdv;
+    totalProductosOficina = (Number(inputs.productsPerPdv) || 0) * pdv;
+    ciclosOficina = calcularCiclos(inputs.frequency, Number(inputs.durationMonths) || 1);
+  }
+
+  const perfiles = Array.isArray(config.officeProfiles) ? config.officeProfiles : [];
+  const perfilesPorId = {};
+  perfiles.forEach((p) => { perfilesPorId[p.id] = p; });
+
+  // Estas 3 tareas se calculan igual que las demás, pero se reconcilian
+  // aparte con el "modo de costeo" de Informe/Dashboard/Presentación
+  // (precio fijo / horas / mixto) — ver calcularCostoServicioAdicional().
+  // Por eso quedan afuera de horasTotalesOficina/costoTotalOficina, pero SÍ
+  // se calculan y se exponen en "tareasPorTipo" para que ese otro cálculo
+  // las use, evitando así duplicar el costo.
+  const tareasQueSeReconcilianAparte = ['elaboracion_informe', 'dashboard', 'elaboracion_presentacion'];
+  const tareasDetalle = [];
+  const tareasPorTipo = {};
+  let horasTotalesOficina = 0;
+  let costoTotalOficina = 0;
+
+  (Array.isArray(config.officeTasks) ? config.officeTasks : []).forEach((tarea) => {
+    if (!tarea.activa) return;
+    if (tarea.aplicaA !== 'ambos' && tarea.aplicaA !== (esMS ? 'mysteryShopper' : 'auditoria')) return;
+
+    const bloques100Productos = Math.ceil(totalProductosOficina / 100);
+    const horas = (Number(tarea.horasBase) || 0)
+      + (Number(tarea.horasPorPdv) || 0) * unidadAlcance
+      + (Number(tarea.horasPorCada100Productos) || 0) * bloques100Productos
+      + (Number(tarea.horasPorCiclo) || 0) * ciclosOficina;
+
+    const perfil = perfilesPorId[tarea.perfilId];
+    const costoHoraCargado = perfil
+      ? calcularCostoHoraCargado(perfil.costoPorHora, {
+          aguinaldoPercent: perfil.aguinaldoPercent,
+          ipsPatronalPercent: perfil.ipsPatronalPercent,
+          otrosCostosLaboralesPercent: perfil.otrosCostosLaboralesPercent,
+        }, {})
+      : 0;
+    const costoTarea = horas * costoHoraCargado;
+
+    // Se acumula por tipo (por si hubiera más de una tarea con el mismo tipo).
+    if (!tareasPorTipo[tarea.tipo]) tareasPorTipo[tarea.tipo] = { horas: 0, costo: 0 };
+    tareasPorTipo[tarea.tipo].horas += horas;
+    tareasPorTipo[tarea.tipo].costo += costoTarea;
+
+    if (tareasQueSeReconcilianAparte.includes(tarea.tipo)) return; // no entra al total general
+
+    if (tarea.condicionA === 'requiresInforme' && !inputs.requiresInforme) return;
+    if (tarea.condicionA === 'requiresDashboard' && !inputs.requiresDashboard) return;
+    if (tarea.condicionA === 'requiresPresentacion' && !inputs.requiresPresentacion) return;
+
+    tareasDetalle.push({
+      id: tarea.id,
+      nombre: tarea.nombre,
+      perfilNombre: perfil ? perfil.nombre : '(sin perfil asignado)',
+      horas,
+      costoHoraCargado,
+      costoTarea,
+    });
+    horasTotalesOficina += horas;
+    costoTotalOficina += costoTarea;
+  });
+
+  return { tareasDetalle, horasTotalesOficina, costoTotalOficina, tareasPorTipo };
+}
+
+/**
+ * Calcula el costo de un servicio adicional de cargo único (Informe final,
+ * Dashboard o Presentación de resultados) según el "modo de costeo"
+ * configurado: precio fijo, según horas hombre, o precio fijo + horas hombre.
+ * Si el servicio no fue solicitado, el costo es 0 (y no se cuentan sus horas).
+ */
+function calcularCostoServicioAdicional(requerido, precioFijoConfigurado, modoCosteo, tareaOficina) {
+  if (!requerido) {
+    return { costo: 0, horas: 0, precioFijoUsado: 0 };
+  }
+  const precioFijo = Number(precioFijoConfigurado) || 0;
+  const horas = tareaOficina ? tareaOficina.horas : 0;
+  const costoHoras = tareaOficina ? tareaOficina.costo : 0;
+
+  switch (modoCosteo) {
+    case 'horas':
+      return { costo: costoHoras, horas, precioFijoUsado: 0 };
+    case 'fijo_mas_horas':
+      return { costo: precioFijo + costoHoras, horas, precioFijoUsado: precioFijo };
+    case 'fijo':
+    default:
+      return { costo: precioFijo, horas: 0, precioFijoUsado: precioFijo };
+  }
+}
+
+/**
+ * Calcula con precisión el tiempo operativo de una Auditoría en PDV, a
+ * partir de los tiempos configurados en minutos (preparación, relevamiento
+ * por producto, evidencia, cierre de formulario, espera y traslado).
+ */
+function calcularTiempoAuditoria(inputs, config) {
+  const productosPorPdv = Number(inputs.productsPerPdv) || 0;
+  const totalVisitas = Number(inputs.totalVisitasCalculadas) || 0;
+  const plazoDeseadoDias = Math.max(1, Number(inputs.plazoDeseadoDiasCiclo) || 1);
+
+  const prepMin = Number(config.auditPrepMinutos) || 0;
+  const porProductoMin = Number(config.auditMinutosPorProducto) || 0;
+  const evidenciaPorProductoMin = Number(config.auditMinutosEvidenciaPorProducto) || 0;
+  const cierreMin = Number(config.auditMinutosCierreFormulario) || 0;
+  const esperaMin = Number(config.auditMinutosEsperaPromedio) || 0;
+  const trasladoMin = Number(config.auditMinutosTrasladoEntrePdv) || 0;
+  const jornadaEfectivaHoras = Number(config.auditJornadaEfectivaHoras) || 0;
+
+  // Tiempo operativo por PDV = preparación + espera + cierre + (productos × min/producto) + (productos × min evidencia)
+  const minutosOperativosPorPdv = prepMin + esperaMin + cierreMin
+    + (productosPorPdv * porProductoMin)
+    + (productosPorPdv * evidenciaPorProductoMin);
+
+  const minutosTrasladoTotales = trasladoMin * totalVisitas;
+  const minutosOperativosTotales = minutosOperativosPorPdv * totalVisitas;
+
+  const horasRelevamiento = minutosOperativosTotales / 60;
+  const horasTraslado = minutosTrasladoTotales / 60;
+  const horasHombreCampo = horasRelevamiento + horasTraslado;
+
+  const minutosPorVisitaCompleta = minutosOperativosPorPdv + trasladoMin;
+  const pdvPorDiaPorPersona = minutosPorVisitaCompleta > 0
+    ? Math.floor((jornadaEfectivaHoras * 60) / minutosPorVisitaCompleta)
+    : 0;
+  const diasNecesariosConUnaPersona = pdvPorDiaPorPersona > 0
+    ? Math.ceil(totalVisitas / pdvPorDiaPorPersona)
+    : (totalVisitas > 0 ? totalVisitas : 0);
+  const relevadoresRecomendados = diasNecesariosConUnaPersona > 0
+    ? Math.ceil(diasNecesariosConUnaPersona / plazoDeseadoDias)
+    : 0;
+
+  return {
+    minutosOperativosPorPdv,
+    minutosTrasladoTotales,
+    horasRelevamiento,
+    horasTraslado,
+    horasHombreCampo,
+    pdvPorDiaPorPersona,
+    diasNecesariosConUnaPersona,
+    relevadoresRecomendados,
+  };
+}
+
+/**
+ * Calcula con precisión el tiempo por visita de un Mystery Shopper, a partir
+ * de los tiempos configurados en minutos: traslado, espera, interacción,
+ * relevamiento de productos/servicios, carga de evidencia e informe.
+ */
+function calcularTiempoMysteryShopper(inputs, config) {
+  const productosPorVisita = Number(inputs.msProductosPorVisita) || 0;
+
+  const trasladoMin = Number(config.msMinutosTraslado) || 0;
+  const esperaMin = Number(config.msMinutosEspera) || 0;
+  const interaccionMin = Number(config.msMinutosInteraccion) || 0;
+  const porProductoMin = Number(config.msMinutosPorProductoServicio) || 0;
+  const evidenciaMin = Number(config.msMinutosCargaEvidencia) || 0;
+  const informeMin = Number(config.msMinutosInformeVisita) || 0;
+
+  // Tiempo por visita = traslado + espera + interacción + (productos × min/producto) + evidencia + informe
+  const minutosPorVisita = trasladoMin + esperaMin + interaccionMin
+    + (productosPorVisita * porProductoMin)
+    + evidenciaMin + informeMin;
+
+  const horasPorVisita = minutosPorVisita / 60;
+  const minutosGestionRemota = Number(config.msMinutosGestionRemota) || 0;
+  const horasGestionRemota = minutosGestionRemota / 60;
+
+  return { minutosPorVisita, horasPorVisita, horasGestionRemota };
+}
+
+
+/**
+ * Calcula la cotización completa de un servicio de Mystery Shopper,
+ * replicando exactamente la lógica del modelo de costeo de referencia:
+ *   A. Trabajo de campo presencial (visitas a sucursales)
+ *   B. Viáticos de movilidad
+ *   C. Canales remotos (WhatsApp / Redes / Web)
+ *   D. Coordinación y análisis (diseño de guion + informe final)
+ *   E. Resumen: mano de obra + viáticos, margen, descuento e IVA
+ */
+function calcularMysteryShopper(inputs, config) {
+  const aseguradoras = Number(inputs.msAseguradorasCount) || 0;
+  const sucursales = Number(inputs.msSucursalesPresencial) || 0;
+  const canalesRemotos = Number(inputs.msCanalesRemotos) || 0;
+  const rondas = Math.max(1, Number(inputs.msRondas) || 1);
+  const plazoDeseadoDias = Math.max(1, Number(inputs.msPlazoDeseadoDias) || 1);
+
+  // --- A. Trabajo de campo presencial ---
+  // El tiempo por visita ahora se calcula con precisión (traslado, espera,
+  // interacción, relevamiento de productos/servicios, evidencia e informe).
+  const tiempoMS = calcularTiempoMysteryShopper(inputs, config);
+
+  // Parámetros opcionales (complejidad, revisitas, ausencias) afectan las
+  // horas de campo ANTES de calcular cuántos shoppers se necesitan.
+  const parametrosOpcionalesPreliminar = calcularParametrosOpcionales(inputs, config, 1);
+  const horasPorVisita = tiempoMS.horasPorVisita * parametrosOpcionalesPreliminar.factorHoras;
+
+  const visitasTotales = sucursales * rondas;
+  const horasHombreCampo = visitasTotales * horasPorVisita;
+
+  const jornadaEfectiva = Number(config.msJornadaEfectivaHorasDia) || 0;
+  const visitasPorDiaPorShopper = horasPorVisita > 0 ? Math.floor(jornadaEfectiva / horasPorVisita) : 0;
+  const diasNecesariosConUnaPersona = visitasPorDiaPorShopper > 0
+    ? Math.ceil(visitasTotales / visitasPorDiaPorShopper)
+    : (visitasTotales > 0 ? visitasTotales : 0);
+  const shoppersNecesarios = diasNecesariosConUnaPersona > 0
+    ? Math.ceil(diasNecesariosConUnaPersona / plazoDeseadoDias)
+    : 0;
+
+  // El costo hora del shopper también lleva cargas sociales (aguinaldo, IPS,
+  // otros costos laborales) y los recargos por trabajo nocturno/fin de
+  // semana si se marcan, igual que en Auditoría en PDV.
+  const costoHoraShopper = calcularCostoHoraCargado(config.msCostoHoraShopper, config, {
+    nocturno: !!inputs.requiresTrabajoNocturno,
+    finDeSemana: !!inputs.requiresFinDeSemana,
+  });
+  const costoCampoManoObra = horasHombreCampo * costoHoraShopper;
+
+  // --- B. Viáticos ---
+  const viaticoPorVisita = Number(config.msViaticoPorVisita) || 0;
+  const viaticosTotales = visitasTotales * viaticoPorVisita;
+
+  // --- C. Canales remotos ---
+  const interaccionesTotales = aseguradoras * canalesRemotos * rondas;
+  const horasHombreRemoto = interaccionesTotales * tiempoMS.horasGestionRemota;
+  const costoRemotoManoObra = horasHombreRemoto * costoHoraShopper;
+
+  // --- D. Coordinación y análisis ---
+  const horasDisenoGuion = Number(config.msHorasDisenoGuion) || 0;
+  const horasAnalisisInforme = Number(config.msHorasAnalisisInforme) || 0;
+  const horasCoordinacion = horasDisenoGuion + horasAnalisisInforme;
+  const costoHoraAnalista = Number(config.msCostoHoraAnalista) || 0;
+  const costoCoordinacion = horasCoordinacion * costoHoraAnalista;
+
+  // --- D2. Mano de obra de OFICINA (interna): tareas de coordinación, análisis, etc. ---
+  const manoDeObraOficina = calcularManoObraOficina(inputs, config);
+  const costoManoDeObraOficina = manoDeObraOficina.costoTotalOficina;
+
+  // --- D3. Parámetros opcionales (costos fijos/adicionales) ---
+  const parametrosOpcionales = calcularParametrosOpcionales(
+    { ...inputs, ciclosParaSupervision: rondas },
+    config,
+    shoppersNecesarios || 1
+  );
+
+  // --- E. Resumen y total ---
+  const subtotalManoObra = costoCampoManoObra + costoRemotoManoObra + costoCoordinacion + costoManoDeObraOficina;
+  const subtotalGeneral = subtotalManoObra + viaticosTotales + parametrosOpcionales.costoAdicionalTotal;
+
+  const costoAdicionalManual = Number(inputs.extraCostManual) || 0;
+
+  // --- Costo interno total vs. precio comercial ---
+  // Mystery Shopper no tiene "escalas de PDV"; el rango comercial sale de
+  // aplicar los 3 niveles de margen (mínimo/recomendado/máximo) sobre el
+  // mismo costo interno con gastos administrativos y contingencia.
+  const costoInternoTotal = subtotalGeneral + costoAdicionalManual;
+  const gastosAdministrativosPercent = Number(config.gastosAdministrativosPercent) || 0;
+  const contingenciaPercent = Number(config.contingenciaPercent) || 0;
+  const montoGastosYContingencia = costoInternoTotal * ((gastosAdministrativosPercent + contingenciaPercent + parametrosOpcionales.recargoUrgenciaPercent) / 100);
+  const costoConGastos = costoInternoTotal + montoGastosYContingencia;
+
+  const tierMinimo = calcularPipelineComercial(costoConGastos, config.margenMinimoPercent, config, inputs);
+  const tierRecomendado = calcularPipelineComercial(costoConGastos, config.margenRecomendadoPercent, config, inputs);
+  const tierMaximo = calcularPipelineComercial(costoConGastos, config.margenMaximoPercent, config, inputs);
+
+  const rangoComercial = { minimo: tierMinimo.total, recomendado: tierRecomendado.total, maximo: tierMaximo.total };
+  const precioFinalInfo = calcularPrecioFinalElegido(inputs, rangoComercial, costoConGastos, tierRecomendado.ivaPercent);
+
+  const subtotalAntesMargen = costoConGastos;
+  const margenPercent = tierRecomendado.margenPercent;
+  const margenComercial = tierRecomendado.margen;
+  const subtotalConMargen = tierRecomendado.subtotalConMargen;
+  const descuentoPercent = tierRecomendado.descuentoPercent;
+  const montoDescuento = tierRecomendado.montoDescuento;
+  const subtotalConDescuento = tierRecomendado.subtotalConDescuento;
+  const ivaPercent = tierRecomendado.ivaPercent;
+  const montoIva = tierRecomendado.montoIva;
+  const total = tierRecomendado.total;
+
+  return {
+    inputs,
+    isCustom: false,
+    desglose: {
+      horasPorVisita,
+      visitasTotales,
+      horasHombreCampo,
+      visitasPorDiaPorShopper,
+      diasNecesariosConUnaPersona,
+      shoppersNecesarios,
+      costoCampoManoObra,
+      viaticosTotales,
+      interaccionesTotales,
+      horasHombreRemoto,
+      costoRemotoManoObra,
+      horasCoordinacion,
+      costoCoordinacion,
+      costoManoDeObraOficina,
+      horasTotalesOficina: manoDeObraOficina.horasTotalesOficina,
+      tareasOficinaDetalle: manoDeObraOficina.tareasDetalle,
+      factorHorasOpcionales: parametrosOpcionalesPreliminar.factorHoras,
+      costoCapacitacionInicial: parametrosOpcionales.costoCapacitacionInicial,
+      costoSupervisionCampo: parametrosOpcionales.costoSupervisionCampo,
+      rondasCorreccionExtra: parametrosOpcionales.rondasExtra,
+      costoCorreccionesExtra: parametrosOpcionales.costoCorreccionesExtra,
+      reunionesExtra: parametrosOpcionales.reunionesExtra,
+      costoReunionesExtra: parametrosOpcionales.costoReunionesExtra,
+      costoTelefonia: parametrosOpcionales.costoTelefonia,
+      costoHerramientas: parametrosOpcionales.costoHerramientas,
+      otrosGastosOperativos: parametrosOpcionales.otrosGastosOperativos,
+      recargoUrgenciaPercent: parametrosOpcionales.recargoUrgenciaPercent,
+      subtotalManoObra,
+      subtotalGeneral,
+      costoAdicionalManual,
+      costoInternoTotal,
+      gastosAdministrativosPercent,
+      contingenciaPercent,
+      montoGastosYContingencia,
+      costoConGastos,
+      rangoComercial,
+      margenMinimoPercent: tierMinimo.margenPercent,
+      margenMaximoPercent: tierMaximo.margenPercent,
+      precioFinalModo: precioFinalInfo.modo,
+      precioFinalElegido: precioFinalInfo.precioFinal,
+      margenRealGs: precioFinalInfo.margenRealGs,
+      margenRealPercent: precioFinalInfo.margenRealPercent,
+      advertenciaPrecioBajoMinimo: precioFinalInfo.advertenciaPrecioBajoMinimo,
+      subtotalAntesMargen,
+      margenPercent,
+      margenComercial,
+      subtotalConMargen,
+      descuentoPercent,
+      montoDescuento,
+      subtotalConDescuento,
+      ivaPercent,
+      montoIva,
+      total,
+    },
+    totalVisitas: visitasTotales,
+    totalInteracciones: interaccionesTotales,
+    costoMensualEstimado: total, // proyecto puntual: no tiene recurrencia mensual
+    costoPromedioPorSucursal: sucursales > 0 ? total / sucursales : 0,
+    costoPromedioPorAseguradora: aseguradoras > 0 ? total / aseguradoras : 0,
+  };
+}
+
+// Etiquetas legibles de cada tipo de servicio (se usan en toda la aplicación).
+const SERVICE_TYPE_LABELS = {
+  auditoria: 'Auditoría en punto de venta',
+  mysteryShopper: 'Mystery Shopper',
+};
+
+/** Determina si una cotización corresponde al servicio de Mystery Shopper. */
+function esMysteryShopper(inputs) {
+  return inputs.serviceType === 'mysteryShopper';
+}
+
+/**
+ * Punto de entrada único para calcular cualquier tipo de cotización.
+ * Deriva al motor de cálculo correspondiente según el tipo de servicio.
+ * Cualquier valor antiguo o desconocido (incluida la cadena literal que
+ * usaban versiones anteriores) cae por defecto en "Auditoría en PDV".
+ */
+function calcularCotizacion(inputs, config) {
+  if (esMysteryShopper(inputs)) {
+    return calcularMysteryShopper(inputs, config);
+  }
+  return calcularAuditoriaPDV(inputs, config);
+}
+
+/**
+ * Calcula la cotización completa de una Auditoría en PDV. Recibe los datos
+ * del formulario (inputs) y la configuración de costos (config). Devuelve
+ * un objeto con todo el desglose necesario para mostrar el resultado y
+ * generar el PDF.
+ */
+/**
+ * Aplica la parte "comercial" del cálculo (margen, descuento, IVA) sobre un
+ * subtotal ya armado (precio de escala + recargos + costo interno con
+ * gastos). Se llama 3 veces —una por cada nivel de margen— para construir
+ * el rango comercial completo (mínimo, recomendado, máximo).
+ */
+function calcularPipelineComercial(subtotalAntesMargen, margenPercent, config, inputs) {
+  const margen = subtotalAntesMargen * ((Number(margenPercent) || 0) / 100);
+  const subtotalConMargen = subtotalAntesMargen + margen;
+
+  const descuentoMax = Number(config.descuentoMaximoPercent) || 0;
+  let descuentoPercent = Number(inputs.discountPercent) || 0;
+  if (descuentoPercent > descuentoMax) descuentoPercent = descuentoMax;
+  if (descuentoPercent < 0) descuentoPercent = 0;
+  const montoDescuento = subtotalConMargen * (descuentoPercent / 100);
+  const subtotalConDescuento = subtotalConMargen - montoDescuento;
+
+  const ivaPercent = Number(config.ivaPercent) || 0;
+  const montoIva = subtotalConDescuento * (ivaPercent / 100);
+
+  const total = subtotalConDescuento + montoIva;
+
+  return {
+    margenPercent: Number(margenPercent) || 0, margen, subtotalConMargen,
+    descuentoPercent, montoDescuento, subtotalConDescuento,
+    ivaPercent, montoIva, total,
+  };
+}
+
+/**
+ * Determina, según el "modo" elegido por el usuario para el precio final
+ * (mínimo / recomendado / máximo / manual), cuál es el precio final a
+ * presentar, y calcula el margen REAL en guaraníes y en porcentaje que
+ * queda una vez descontado el IVA, comparado contra el costo con gastos.
+ * También marca si ese precio quedó por debajo del mínimo recomendado.
+ */
+function calcularPrecioFinalElegido(inputs, rango, costoConGastos, ivaPercent) {
+  const modo = inputs.precioFinalModo || 'recomendado';
+  let precioFinal;
+  if (modo === 'minimo') precioFinal = rango.minimo;
+  else if (modo === 'maximo') precioFinal = rango.maximo;
+  else if (modo === 'manual') precioFinal = Number(inputs.precioFinalManual) || 0;
+  else precioFinal = rango.recomendado;
+
+  const subtotalSinIva = precioFinal / (1 + (Number(ivaPercent) || 0) / 100);
+  const margenRealGs = subtotalSinIva - costoConGastos;
+  const margenRealPercent = costoConGastos > 0 ? (margenRealGs / costoConGastos) * 100 : 0;
+  const advertenciaPrecioBajoMinimo = precioFinal < rango.minimo;
+
+  return { modo, precioFinal, margenRealGs, margenRealPercent, advertenciaPrecioBajoMinimo };
+}
+
+function calcularAuditoriaPDV(inputs, config) {
+  const pdv = Number(inputs.pdvCount) || 0;
+  const productosPorPdv = Number(inputs.productsPerPdv) || 0;
+  const visitasPorPdv = Number(inputs.visitsPerPdv) || 1;
+  const duracionMeses = Number(inputs.durationMonths) || 1;
+  const ciclos = calcularCiclos(inputs.frequency, duracionMeses);
+  const totalVisitas = visitasPorPdv * ciclos * pdv;
+
+  // --- 1. Precio base ---
+  const baseInfo = obtenerPrecioBasePorPDV(pdv, config);
+  const precioBaseCiclo = baseInfo.price;
+
+  // --- 2. Recargo por productos adicionales (por ciclo) ---
+  // La cantidad de productos incluidos depende de la escala de PDV que corresponda.
+  const productosIncluidos = Number(baseInfo.productsIncluidos) || 0;
+  const productosExtra = Math.max(0, productosPorPdv - productosIncluidos);
+  const recargoProductosCiclo = productosExtra * (Number(config.extraProductSurcharge) || 0) * pdv;
+
+  // --- 3. Recargo por visitas adicionales (por ciclo). Se asume 1 visita incluida. ---
+  const visitasExtra = Math.max(0, visitasPorPdv - 1);
+  const recargoVisitasCiclo = visitasExtra * (Number(config.costoVisitaAdicional) || 0) * pdv;
+
+  const subtotalPorCiclo = precioBaseCiclo + recargoProductosCiclo + recargoVisitasCiclo;
+  const subtotalRecurrente = subtotalPorCiclo * ciclos;
+
+  // --- 4. Recargo por zona (sobre el subtotal recurrente) ---
+  let porcentajeZona = 0;
+  if (inputs.zone === 'granAsuncion') {
+    porcentajeZona = Number(config.surchargeGranAsuncionPercent) || 0;
+  } else if (inputs.zone === 'interior') {
+    porcentajeZona = Number(config.surchargeInteriorPercent) || 0;
+  } else if (inputs.zone === 'combinada') {
+    // Zona combinada: se distribuyen los PDV entre las 3 zonas y se calcula
+    // un porcentaje de recargo PONDERADO según qué proporción de PDV cae en
+    // cada zona (Asunción no suma recargo).
+    const pAsuncion = Number(inputs.pdvAsuncion) || 0;
+    const pGranAsuncion = Number(inputs.pdvGranAsuncion) || 0;
+    const pInterior = Number(inputs.pdvInterior) || 0;
+    const totalZona = pAsuncion + pGranAsuncion + pInterior;
+    const base = totalZona > 0 ? totalZona : pdv;
+    if (base > 0) {
+      porcentajeZona =
+        (pGranAsuncion * (Number(config.surchargeGranAsuncionPercent) || 0) +
+          pInterior * (Number(config.surchargeInteriorPercent) || 0)) / base;
+    }
+  }
+  const recargoZona = subtotalRecurrente * (porcentajeZona / 100);
+
+  // --- 5. Auditores ---
+  let cantidadAuditores;
+  if (inputs.auditorsMode === 'manual') {
+    cantidadAuditores = Math.max(1, Number(inputs.auditorsCount) || 1);
+  } else {
+    const capacidad = Number(config.pdvPerAuditor) || 1;
+    cantidadAuditores = Math.max(1, Math.ceil(pdv / capacidad));
+  }
+
+  // --- 6. Costos operativos (traslado, viáticos, alojamiento) ---
+  const costoTraslado = inputs.requiresTraslado
+    ? cantidadAuditores * ciclos * (Number(config.costoTraslado) || 0)
+    : 0;
+  const costoViaticos = inputs.requiresViaticos
+    ? cantidadAuditores * ciclos * (Number(config.viaticoPorAuditorPorDia) || 0)
+    : 0;
+  const costoAlojamiento = inputs.requiresAlojamiento
+    ? cantidadAuditores * ciclos * (Number(config.alojamientoPorAuditorPorNoche) || 0)
+    : 0;
+
+  // --- 7C. Mano de obra de OFICINA (interna): tareas de coordinación, análisis, etc. ---
+  // Se calcula ANTES de los servicios adicionales porque el costeo de
+  // Informe/Dashboard/Presentación puede necesitar las horas de sus tareas.
+  const manoDeObraOficina = calcularManoObraOficina(inputs, config);
+  const costoManoDeObraOficina = manoDeObraOficina.costoTotalOficina;
+
+  // --- 7. Servicios adicionales (cargo único) ---
+  const costoFotografia = inputs.requiresFotografia ? Number(config.costoEvidenciaFotografica) || 0 : 0;
+  const infoInforme = calcularCostoServicioAdicional(
+    inputs.requiresInforme, config.costoInformeFinal, config.modoCosteoInforme, manoDeObraOficina.tareasPorTipo.elaboracion_informe
+  );
+  const infoDashboard = calcularCostoServicioAdicional(
+    inputs.requiresDashboard, config.costoDashboard, config.modoCosteoDashboard, manoDeObraOficina.tareasPorTipo.dashboard
+  );
+  const infoPresentacion = calcularCostoServicioAdicional(
+    inputs.requiresPresentacion, config.costoPresentacion, config.modoCosteoPresentacion, manoDeObraOficina.tareasPorTipo.elaboracion_presentacion
+  );
+  const costoInforme = infoInforme.costo;
+  const costoDashboard = infoDashboard.costo;
+  const costoPresentacion = infoPresentacion.costo;
+
+  // --- 7B. Mano de obra (horas hombre), con tiempos precisos y cargas sociales ---
+  // El tiempo de campo ahora se calcula con precisión (preparación, relevamiento
+  // por producto, evidencia, cierre de formulario, espera y traslado entre PDV),
+  // en vez de una única "hora por visita" estimada a ojo.
+  const tiempoAuditoria = calcularTiempoAuditoria(
+    { ...inputs, totalVisitasCalculadas: totalVisitas },
+    config
+  );
+
+  // --- Parámetros opcionales del proyecto (complejidad, revisitas, ausencias,
+  // capacitación, supervisión, correcciones/reuniones extra, gastos fijos, urgencia) ---
+  const parametrosOpcionales = calcularParametrosOpcionales(
+    { ...inputs, ciclosParaSupervision: ciclos },
+    config,
+    cantidadAuditores
+  );
+
+  const horasHombreTotales = tiempoAuditoria.horasHombreCampo * parametrosOpcionales.factorHoras;
+  const costoHoraHombreCargado = calcularCostoHoraCargado(config.costoPorHoraHombre, config, {
+    nocturno: !!inputs.requiresTrabajoNocturno,
+    finDeSemana: !!inputs.requiresFinDeSemana,
+  });
+  const costoManoDeObra = horasHombreTotales * costoHoraHombreCargado;
+
+  // --- 8. Costo adicional manual ---
+  const costoAdicionalManual = Number(inputs.extraCostManual) || 0;
+
+  const subtotalOperativo =
+    costoTraslado + costoViaticos + costoAlojamiento +
+    costoFotografia + costoInforme + costoDashboard + costoPresentacion +
+    costoManoDeObra + costoManoDeObraOficina + parametrosOpcionales.costoAdicionalTotal + costoAdicionalManual;
+
+  // --- 9. Costo interno total vs. precio comercial ---
+  // El "costo interno" es todo lo que realmente cuesta ejecutar el servicio
+  // (mano de obra, traslados, viáticos, servicios adicionales, etc.), sin
+  // ningún componente comercial todavía.
+  const costoInternoTotal = subtotalOperativo;
+  const gastosAdministrativosPercent = Number(config.gastosAdministrativosPercent) || 0;
+  const contingenciaPercent = Number(config.contingenciaPercent) || 0;
+  const montoGastosYContingencia = costoInternoTotal * ((gastosAdministrativosPercent + contingenciaPercent + parametrosOpcionales.recargoUrgenciaPercent) / 100);
+  const costoConGastos = costoInternoTotal + montoGastosYContingencia;
+
+  // El precio "de escala" (mínimo/recomendado/máximo) se combina con los
+  // recargos, la zona y el costo con gastos para armar el RANGO COMERCIAL
+  // completo: 3 cotizaciones paralelas, una por cada nivel de margen.
+  function calcularTier(precioBaseCicloTier, margenPercentTier) {
+    const subtotalPorCicloTier = precioBaseCicloTier + recargoProductosCiclo + recargoVisitasCiclo;
+    const subtotalRecurrenteTier = subtotalPorCicloTier * ciclos;
+    const recargoZonaTier = subtotalRecurrenteTier * (porcentajeZona / 100);
+    const subtotalAntesMargenTier = subtotalRecurrenteTier + recargoZonaTier + costoConGastos;
+    return {
+      subtotalPorCiclo: subtotalPorCicloTier,
+      subtotalRecurrente: subtotalRecurrenteTier,
+      recargoZona: recargoZonaTier,
+      subtotalAntesMargen: subtotalAntesMargenTier,
+      ...calcularPipelineComercial(subtotalAntesMargenTier, margenPercentTier, config, inputs),
+    };
+  }
+
+  const tierMinimo = calcularTier(baseInfo.priceMin, config.margenMinimoPercent);
+  const tierRecomendado = calcularTier(baseInfo.price, config.margenRecomendadoPercent);
+  const tierMaximo = calcularTier(baseInfo.priceMax, config.margenMaximoPercent);
+
+  const rangoComercial = { minimo: tierMinimo.total, recomendado: tierRecomendado.total, maximo: tierMaximo.total };
+  const precioFinalInfo = calcularPrecioFinalElegido(inputs, rangoComercial, costoConGastos, tierRecomendado.ivaPercent);
+
+  // --- Campos "clásicos" del desglose: usan el tier RECOMENDADO, para no
+  // romper el resultado, PDF e historial ya existentes. ---
+  const subtotalAntesMargen = tierRecomendado.subtotalAntesMargen;
+  const margenPercent = tierRecomendado.margenPercent;
+  const margenComercial = tierRecomendado.margen;
+  const subtotalConMargen = tierRecomendado.subtotalConMargen;
+  const descuentoPercent = tierRecomendado.descuentoPercent;
+  const montoDescuento = tierRecomendado.montoDescuento;
+  const subtotalConDescuento = tierRecomendado.subtotalConDescuento;
+  const ivaPercent = tierRecomendado.ivaPercent;
+  const montoIva = tierRecomendado.montoIva;
+  const total = tierRecomendado.total;
+
+  const costoPromedioPorPdv = pdv > 0 ? total / pdv : 0;
+  const costoPromedioPorVisita = totalVisitas > 0 ? total / totalVisitas : 0;
+  // Costo mensual estimado: distribuye el total del proyecto entre la
+  // cantidad de meses de duración, para dar una referencia de gasto mensual.
+  const costoMensualEstimado = total / duracionMeses;
+
+  return {
+    inputs,
+    ciclos,
+    isCustom: baseInfo.isCustom,
+    desglose: {
+      precioBaseCiclo,
+      recargoProductosCiclo,
+      recargoVisitasCiclo,
+      subtotalPorCiclo,
+      subtotalRecurrente,
+      porcentajeZona,
       recargoZona,
+      cantidadAuditores,
       costoTraslado,
       costoViaticos,
       costoAlojamiento,
-      costoEvidencia,
+      costoFotografia,
       costoInforme,
       costoDashboard,
       costoPresentacion,
+      horasHombreTotales,
+      costoHoraHombreCargado,
+      costoManoDeObra,
+      minutosOperativosPorPdv: tiempoAuditoria.minutosOperativosPorPdv,
+      horasRelevamiento: tiempoAuditoria.horasRelevamiento,
+      horasTraslado: tiempoAuditoria.horasTraslado,
+      pdvPorDiaPorPersona: tiempoAuditoria.pdvPorDiaPorPersona,
+      diasNecesariosConUnaPersona: tiempoAuditoria.diasNecesariosConUnaPersona,
+      relevadoresRecomendados: tiempoAuditoria.relevadoresRecomendados,
+      // --- Parámetros opcionales aplicados ---
+      factorHorasOpcionales: parametrosOpcionales.factorHoras,
+      costoCapacitacionInicial: parametrosOpcionales.costoCapacitacionInicial,
+      costoSupervisionCampo: parametrosOpcionales.costoSupervisionCampo,
+      rondasCorreccionExtra: parametrosOpcionales.rondasExtra,
+      costoCorreccionesExtra: parametrosOpcionales.costoCorreccionesExtra,
+      reunionesExtra: parametrosOpcionales.reunionesExtra,
+      costoReunionesExtra: parametrosOpcionales.costoReunionesExtra,
+      costoTelefonia: parametrosOpcionales.costoTelefonia,
+      costoHerramientas: parametrosOpcionales.costoHerramientas,
+      otrosGastosOperativos: parametrosOpcionales.otrosGastosOperativos,
+      recargoUrgenciaPercent: parametrosOpcionales.recargoUrgenciaPercent,
+      costoManoDeObraOficina,
+      horasTotalesOficina: manoDeObraOficina.horasTotalesOficina,
+      tareasOficinaDetalle: manoDeObraOficina.tareasDetalle,
       costoAdicionalManual,
-      subtotalCostos,
-      margenPct,
+      subtotalOperativo,
+      // --- Costo interno vs. precio comercial (rango) ---
+      costoInternoTotal,
+      gastosAdministrativosPercent,
+      contingenciaPercent,
+      montoGastosYContingencia,
+      costoConGastos,
+      rangoComercial,
+      margenMinimoPercent: tierMinimo.margenPercent,
+      margenMaximoPercent: tierMaximo.margenPercent,
+      precioFinalModo: precioFinalInfo.modo,
+      precioFinalElegido: precioFinalInfo.precioFinal,
+      margenRealGs: precioFinalInfo.margenRealGs,
+      margenRealPercent: precioFinalInfo.margenRealPercent,
+      advertenciaPrecioBajoMinimo: precioFinalInfo.advertenciaPrecioBajoMinimo,
+      subtotalAntesMargen,
+      margenPercent,
       margenComercial,
       subtotalConMargen,
-      descuentoPct,
+      descuentoPercent,
       montoDescuento,
-      subtotalDespuesDescuento,
-      ivaPct,
+      subtotalConDescuento,
+      ivaPercent,
       montoIva,
       total,
-      costoPromedioPDV: cantidadPDV > 0 ? total / cantidadPDV : 0,
-      costoPromedioVisita: totalVisitas > 0 ? total / totalVisitas : 0,
+    },
+    totalProductos: productosPorPdv * pdv,
+    totalVisitas,
+    costoMensualEstimado,
+    productosIncluidosEscala: productosIncluidos,
+    costoPromedioPorPdv,
+    costoPromedioPorVisita,
+  };
+}
+
+/* ==========================================================================
+   3. VALIDACION
+   ========================================================================== */
+
+function formatearMoneda(valor, moneda = 'PYG') {
+  const num = Math.round(Number(valor) || 0);
+  const formateado = num.toLocaleString('es-PY');
+  const prefijo = moneda === 'PYG' ? 'Gs. ' : moneda + ' ';
+  return prefijo + formateado;
+}
+
+/**
+ * Utilidades para mostrar montos en los campos de entrada con separador
+ * de miles (formato paraguayo: 10.000.000) mientras se escriben, guardando
+ * siempre el valor numérico real "sin puntos" para los cálculos.
+ */
+function formatMilesDisplay(value) {
+  const digits = String(value === undefined || value === null ? '' : value).replace(/[^0-9]/g, '');
+  if (digits === '') return '';
+  return Number(digits).toLocaleString('es-PY');
+}
+
+function parseMilesValue(value) {
+  const digits = String(value === undefined || value === null ? '' : value).replace(/[^0-9]/g, '');
+  return digits ? Number(digits) : 0;
+}
+
+function attachMilesFormatting(el) {
+  if (!el) return;
+  el.setAttribute('inputmode', 'numeric');
+  el.value = formatMilesDisplay(el.value);
+  el.addEventListener('input', () => {
+    el.value = formatMilesDisplay(el.value);
+  });
+}
+
+// Campos de configuración que representan montos en guaraníes (se muestran
+// con separador de miles). El resto (porcentajes, cantidades) se dejan como
+// número simple.
+const CAMPOS_MONEDA_CONFIG = [
+  'extraProductSurcharge', 'costoTraslado', 'viaticoPorAuditorPorDia',
+  'alojamientoPorAuditorPorNoche', 'costoVisitaAdicional', 'costoEvidenciaFotografica',
+  'costoInformeFinal', 'costoDashboard', 'costoPresentacion', 'costoPorHoraHombre',
+  'msCostoHoraShopper', 'msCostoHoraAnalista', 'msViaticoPorVisita',
+  'gastoTelefoniaPorRelevador', 'costoHerramientasLicencias', 'otrosGastosOperativosMonto',
+];
+
+function validarFormularioCotizacion(inputs) {
+  const errores = [];
+
+  if (!inputs.clientName || inputs.clientName.trim() === '') {
+    errores.push('El nombre del cliente o empresa es obligatorio.');
+  }
+  if (!inputs.quoteDate) {
+    errores.push('La fecha de cotización es obligatoria.');
+  }
+
+  if (esMysteryShopper(inputs)) {
+    // --- Validaciones específicas de Mystery Shopper ---
+    const aseguradoras = Number(inputs.msAseguradorasCount) || 0;
+    const sucursales = Number(inputs.msSucursalesPresencial) || 0;
+    if (aseguradoras < 0) {
+      errores.push('La cantidad de empresas a monitorear no puede ser negativa.');
+    }
+    if (sucursales < 0) {
+      errores.push('La cantidad de sucursales a visitar no puede ser negativa.');
+    }
+    if (aseguradoras === 0 && sucursales === 0) {
+      errores.push('Debe indicar al menos una empresa a monitorear o una sucursal a visitar.');
+    }
+    if (!inputs.msCanalesRemotos || Number(inputs.msCanalesRemotos) < 0) {
+      errores.push('La cantidad de canales remotos por empresa monitoreada no es válida.');
+    }
+    if (!inputs.msRondas || Number(inputs.msRondas) <= 0) {
+      errores.push('La cantidad de rondas de relevamiento debe ser mayor que cero.');
+    }
+    if (!inputs.msPlazoDeseadoDias || Number(inputs.msPlazoDeseadoDias) <= 0) {
+      errores.push('El plazo deseado (días hábiles) debe ser mayor que cero.');
+    }
+  } else {
+    // --- Validaciones específicas de Auditoría en PDV ---
+    if (!inputs.pdvCount || Number(inputs.pdvCount) <= 0) {
+      errores.push('La cantidad de puntos de venta (PDV) debe ser mayor que cero.');
+    }
+    if (inputs.productsPerPdv === '' || Number(inputs.productsPerPdv) < 0) {
+      errores.push('La cantidad de productos por PDV no es válida.');
+    }
+    if (!inputs.visitsPerPdv || Number(inputs.visitsPerPdv) <= 0) {
+      errores.push('La cantidad de visitas por PDV debe ser mayor que cero.');
+    }
+    if (!inputs.durationMonths || Number(inputs.durationMonths) <= 0) {
+      errores.push('La duración del proyecto debe ser mayor que cero.');
+    }
+    if (!inputs.zone) {
+      errores.push('Debe seleccionar una zona.');
+    }
+    if (inputs.zone === 'interior' && (!inputs.department || inputs.department.trim() === '')) {
+      errores.push('Debe indicar el departamento o ciudad para la zona Interior.');
+    }
+    if (inputs.zone === 'combinada') {
+      const pAsuncion = Number(inputs.pdvAsuncion) || 0;
+      const pGranAsuncion = Number(inputs.pdvGranAsuncion) || 0;
+      const pInterior = Number(inputs.pdvInterior) || 0;
+      const sumaZonas = pAsuncion + pGranAsuncion + pInterior;
+      if (sumaZonas !== Number(inputs.pdvCount)) {
+        errores.push(`La suma de PDV por zona (${sumaZonas}) debe ser igual a la cantidad total de PDV (${inputs.pdvCount}).`);
+      }
+    }
+    if (inputs.auditorsMode === 'manual' && (!inputs.auditorsCount || Number(inputs.auditorsCount) <= 0)) {
+      errores.push('Debe indicar una cantidad de auditores válida en modo manual.');
+    }
+  }
+
+  if (Number(inputs.discountPercent) < 0) {
+    errores.push('El descuento no puede ser negativo.');
+  }
+  if (Number(inputs.extraCostManual) < 0) {
+    errores.push('El costo adicional manual no puede ser negativo.');
+  }
+  if (Number(inputs.extraCostManual) > 0 && (!inputs.extraCostReason || inputs.extraCostReason.trim() === '')) {
+    errores.push('Debe indicar el motivo del costo adicional manual.');
+  }
+
+  return errores;
+}
+
+/**
+ * Valida que las escalas de configuración no se superpongan y no dejen huecos.
+ * Devuelve { errores: [], advertencias: [] }
+ */
+function validarEscalas(scales) {
+  const errores = [];
+  const advertencias = [];
+  const ordenadas = escalasOrdenadas(scales);
+
+  ordenadas.forEach((s) => {
+    if (Number(s.min) <= 0 || Number(s.max) <= 0) {
+      errores.push(`La escala ${s.min}-${s.max} debe tener valores mayores que cero.`);
+    }
+    if (Number(s.min) > Number(s.max)) {
+      errores.push(`La escala ${s.min}-${s.max} tiene un mínimo mayor que el máximo.`);
+    }
+    if (Number(s.precioMinimo) < 0 || Number(s.precioRecomendado) < 0 || Number(s.precioMaximo) < 0) {
+      errores.push(`La escala ${s.min}-${s.max} tiene un precio negativo.`);
+    }
+    if (Number(s.precioMinimo) > Number(s.precioRecomendado)) {
+      errores.push(`La escala ${s.min}-${s.max}: el precio mínimo no puede ser mayor que el recomendado.`);
+    }
+    if (Number(s.precioRecomendado) > Number(s.precioMaximo)) {
+      errores.push(`La escala ${s.min}-${s.max}: el precio recomendado no puede ser mayor que el máximo.`);
+    }
+  });
+
+  for (let i = 0; i < ordenadas.length - 1; i++) {
+    const actual = ordenadas[i];
+    const siguiente = ordenadas[i + 1];
+    if (siguiente.min <= actual.max) {
+      errores.push(`Las escalas "${actual.min}-${actual.max}" y "${siguiente.min}-${siguiente.max}" se superponen.`);
+    } else if (siguiente.min > actual.max + 1) {
+      advertencias.push(`Existe un hueco sin cubrir entre ${actual.max} y ${siguiente.min} PDV.`);
+    }
+  }
+
+  return { errores, advertencias };
+}
+
+/* ==========================================================================
+   3B. AYUDA CONTEXTUAL (ICONOS "i")
+   --------------------------------------------------------------------------
+   Textos explicativos que se muestran al hacer clic en el icono "i" junto
+   a cada campo, para que cualquier persona que use el sistema entienda
+   exactamente qué significa el valor y cómo se aplica en el cálculo.
+   ========================================================================== */
+
+const INFO_TEXTS = {
+  // --- Nueva cotización: Datos del cliente ---
+  clientName: 'Nombre del cliente o empresa que recibe la cotización. Aparece en el documento final, en el PDF y en el historial.',
+  contactName: 'Nombre de la persona de contacto en la empresa del cliente (opcional). Es solo informativo: no afecta el cálculo del precio.',
+  quoteDate: 'Fecha en la que se emite la cotización. Se usa para el historial y como referencia para calcular la vigencia.',
+  projectName: 'Nombre interno del proyecto o campaña (opcional). Sirve para identificar la cotización más fácilmente en el historial.',
+  validity: 'Cantidad de días que la cotización es válida desde la fecha de emisión. Es solo informativo: el sistema no la vence automáticamente; el estado se cambia manualmente en el historial.',
+  notes: 'Cualquier observación adicional que quiera dejar registrada en la cotización. No afecta el cálculo del precio.',
+
+  // --- Nueva cotización: Datos del servicio ---
+  serviceType: 'Tipo de servicio a cotizar. Según lo que elija, el formulario cambia para pedirle los datos correctos: "Auditoría en punto de venta" (PDV, productos, zona, etc.) o "Mystery Shopper" (empresas a monitorear, sucursales, canales remotos, etc.).',
+  pdvCount: 'Cantidad total de puntos de venta (locales/sucursales) a auditar. Es el dato principal: define automáticamente qué escala de precio se usa (ver "Escalas de precio" en Configuración).',
+  productsPerPdv: 'Cantidad aproximada de productos que se van a relevar EN CADA PDV (no el total). Si este número supera la cantidad de "Productos incluidos" de la escala correspondiente, se cobra un recargo por CADA producto que se pase, multiplicado por la cantidad de PDV.',
+  visitsPerPdv: 'Cantidad de visitas que se realizan a CADA PDV dentro de un mismo ciclo (por ejemplo, dentro de un mes si la frecuencia es mensual). La primera visita ya está incluida en el precio base; desde la segunda en adelante se cobra el "Costo por visita adicional" configurado.',
+  frequency: 'Con qué periodicidad se repite el servicio. "Única" = una sola vez. Semanal/Quincenal/Mensual se repiten durante toda la "Duración del proyecto". Junto con la duración, define la cantidad de "ciclos" de cobro.',
+  durationMonths: 'Cantidad de meses que dura el proyecto. Combinado con la frecuencia, determina la cantidad de ciclos de cobro. Ejemplo: frecuencia mensual x 3 meses = 3 ciclos completos.',
+  zone: 'Ubicación general de los PDV. "Asunción" no tiene recargo. "Gran Asunción" e "Interior" suman el porcentaje de recargo de zona configurado en Configuración de costos. "Combinada" permite repartir los PDV entre las 3 zonas cuando el cliente tiene locales en distintos lugares del país.',
+  department: 'Departamento o ciudad específica (por ejemplo, dentro de Gran Asunción o Interior). Es solo informativo: no cambia el precio, solo aparece en el documento.',
+  pdvAsuncion: 'Cantidad de PDV ubicados en Asunción (sin recargo de zona). La suma de los 3 campos de zona debe ser igual a la "Cantidad de puntos de venta" total.',
+  pdvGranAsuncion: 'Cantidad de PDV ubicados en Gran Asunción. Se les aplica el recargo de zona configurado para Gran Asunción. La suma de los 3 campos debe ser igual al total de PDV.',
+  pdvInterior: 'Cantidad de PDV ubicados en el Interior del país. Se les aplica el recargo de zona configurado para Interior. La suma de los 3 campos debe ser igual al total de PDV.',
+  auditorsMode: '"Automático": el sistema calcula la cantidad de auditores dividiendo la cantidad de PDV entre la capacidad configurada en "PDV cubiertos por auditor" (Configuración). "Manual": usted define la cantidad exacta de auditores.',
+  auditorsCount: 'Cantidad exacta de auditores a asignar (solo si eligió el modo "Manual"). Este número se usa para calcular el costo de traslado, viáticos y alojamiento si están marcados.',
+
+  // --- Nueva cotización: Mystery Shopper (alcance) ---
+  msAseguradorasCount: 'Cantidad de empresas de la competencia a monitorear (pueden ser aseguradoras, bancos, cadenas de retail, restaurantes, o cualquier tipo de negocio). Este número se usa para calcular las interacciones y el costo de los canales remotos (WhatsApp, Redes Sociales, Web).',
+  msSucursalesPresencial: 'Cantidad de sucursales a visitar en persona (trabajo de campo, dentro de Asunción). Si no requiere visitas presenciales, deje este valor en 0.',
+  msCanalesRemotos: 'Cantidad de canales remotos a monitorear por cada empresa (por ejemplo: WhatsApp + Redes Sociales + Web = 3). Se multiplica por la cantidad de empresas y de rondas para calcular las interacciones totales.',
+  msRondas: 'Cantidad de veces que se repite todo el relevamiento (presencial y remoto). 1 = una sola medición; 2 o más = repetir para controlar variabilidad en el tiempo.',
+  msPlazoDeseadoDias: 'Cantidad de días hábiles en los que se desea completar el trabajo de campo presencial. A menor plazo, se necesitan más mystery shoppers trabajando en simultáneo.',
+
+  // --- Nueva cotización: Servicios adicionales ---
+  requiresTraslado: 'Si se marca, se suma el "Costo de traslado" configurado, multiplicado por la cantidad de auditores y por la cantidad de ciclos del proyecto (se asume 1 viaje por ciclo).',
+  requiresAlojamiento: 'Si se marca, se suma el costo de "Alojamiento por auditor, por noche" configurado, multiplicado por la cantidad de auditores y de ciclos (se asume 1 noche por ciclo).',
+  requiresViaticos: 'Si se marca, se suma el "Viático por auditor, por día" configurado, multiplicado por la cantidad de auditores y de ciclos (se asume 1 día por ciclo).',
+  requiresFotografia: 'Si se marca, se suma UNA SOLA VEZ el costo de "Evidencia fotográfica" configurado. Es un cargo único: no se multiplica por PDV ni por ciclos.',
+  requiresInforme: 'Si se marca, se suma UNA SOLA VEZ el costo de "Informe final" configurado. Es un cargo único, no se repite.',
+  requiresDashboard: 'Si se marca, se suma UNA SOLA VEZ el costo de "Dashboard" configurado. Es un cargo único, no se repite.',
+  requiresPresentacion: 'Si se marca, se suma UNA SOLA VEZ el costo de "Presentación de resultados" configurado. Es un cargo único, no se repite.',
+
+  // --- Nueva cotización: Ajustes comerciales ---
+  discountPercent: 'Porcentaje de descuento que se aplica sobre el subtotal con margen ya incluido. No puede superar el "Descuento máximo permitido" definido en Configuración de costos: si ingresa un valor mayor, el sistema lo recorta automáticamente.',
+  extraCostManual: 'Monto en guaraníes que se suma manualmente SOLO a esta cotización puntual (por ejemplo, un requerimiento especial del cliente). Si carga un valor mayor a 0, es obligatorio explicar el motivo.',
+  extraCostReason: 'Explicación breve del motivo del costo adicional manual. Es obligatoria únicamente si el "Costo adicional manual" es mayor a 0.',
+
+  // --- Cálculo rápido ---
+  rapidoCliente: 'Nombre del cliente (opcional). Si lo completa, se transfiere al formulario de "Nueva cotización" al presionar "Usar estos datos".',
+  rapidoPdvCount: 'Cantidad de puntos de venta a auditar. Es el único dato obligatorio para poder calcular un estimado rápido.',
+  rapidoProductsPerPdv: 'Cantidad aproximada de productos por cada PDV. Si supera lo incluido en la escala correspondiente, se recarga por cada producto adicional (igual que en la cotización completa).',
+  rapidoZone: 'Ubicación de los PDV. Gran Asunción e Interior aplican el recargo de zona configurado. "Combinada" permite repartir los PDV entre las 3 zonas.',
+  rapidoDepartment: 'Departamento o ciudad específica. Solo informativo.',
+  rapidoPdvAsuncion: 'Cantidad de PDV en Asunción (sin recargo). La suma de los 3 campos debe ser igual al total de PDV.',
+  rapidoPdvGranAsuncion: 'Cantidad de PDV en Gran Asunción (con su recargo de zona). La suma de los 3 campos debe ser igual al total de PDV.',
+  rapidoPdvInterior: 'Cantidad de PDV en el Interior (con su recargo de zona). La suma de los 3 campos debe ser igual al total de PDV.',
+  rapidoVisitsPerPdv: 'Cantidad de visitas a cada PDV por ciclo. La primera está incluida; desde la segunda se cobra el costo de visita adicional.',
+  rapidoFrequency: 'Periodicidad del servicio. En el cálculo rápido, por defecto se deja en "Única" para simplificar la estimación.',
+  rapidoDurationMonths: 'Cantidad de meses del proyecto. Junto con la frecuencia define la cantidad de ciclos de cobro.',
+  rapidoServiceType: 'Tipo de servicio a estimar. Cambia los campos que siguen, igual que en "Nueva cotización".',
+  rapidoPlazoDeseadoDiasCiclo: 'Días hábiles deseados para completar el relevamiento de un ciclo. Afecta la cantidad de relevadores recomendados.',
+  rapidoMsAseguradorasCount: 'Cantidad de empresas de la competencia a monitorear.',
+  rapidoMsSucursalesPresencial: 'Cantidad de sucursales a visitar en persona (Asunción).',
+  rapidoMsProductosPorVisita: 'Cantidad aproximada de productos o servicios a relevar en cada visita presencial.',
+  rapidoMsCanalesRemotos: 'Cantidad de canales remotos a monitorear por cada empresa (WhatsApp, Redes, Web).',
+  rapidoMsRondas: 'Cantidad de veces que se repite todo el relevamiento.',
+  rapidoMsPlazoDeseadoDias: 'Días hábiles deseados para completar el trabajo de campo presencial.',
+
+  // --- Configuración: Escalas de precio ---
+  escalaMin: 'Cantidad MÍNIMA de PDV que entra en este rango (el valor es incluido). Por ejemplo, si el mínimo es 11, un cliente con 11 PDV ya entra en esta escala.',
+  escalaMax: 'Cantidad MÁXIMA de PDV que entra en este rango (el valor es incluido). Si una cotización pide más PDV que el máximo de la ÚLTIMA escala, el sistema muestra "cotización personalizada" y calcula un valor orientativo.',
+  escalaProductos: 'Cantidad de productos POR PDV que YA ESTÁN INCLUIDOS en el precio base de ESTA escala puntual. Si el cliente pide más productos por PDV que este número, se cobra el "Recargo por producto adicional" (configurado más abajo) por cada unidad que se pase.',
+  escalaPrecioMinimo: 'Precio mínimo aceptable para esta escala completa, por UN ciclo de visita. Sirve como piso de negociación: la cotización nunca debería cerrarse por debajo de este valor sin revisión.',
+  escalaPrecioRecomendado: 'Precio recomendado (objetivo comercial) para esta escala completa, por UN ciclo de visita, antes de recargos, margen de ganancia, descuento e IVA. Es el valor que usa el cálculo estándar de la cotización.',
+  escalaPrecioMaximo: 'Precio máximo sugerido para esta escala completa, por UN ciclo de visita. Representa el techo razonable a ofrecer, útil como referencia para clientes con mayores exigencias o urgencia.',
+  pricingMode: '"Cerrado por escala": todo el rango cobra el mismo precio fijo (ej: 11 y 15 PDV pagan lo mismo). "Progresivo (interpolado)": el precio sube de forma gradual a medida que aumentan los PDV dentro del rango, en vez de saltar de golpe entre una escala y la siguiente.',
+
+  // --- Configuración: Productos ---
+  extraProductSurcharge: 'Monto que se cobra POR CADA PRODUCTO adicional (uno por uno, no por lote de 10 ni de 100) que supere la cantidad de "Productos incluidos" de la escala correspondiente. Se multiplica por la cantidad de PDV y se cobra en cada ciclo. Ejemplo: escala con 50 productos incluidos, cliente pide 60 en 10 PDV, recargo Gs. 5.000 → (60-50) × Gs. 5.000 × 10 PDV = Gs. 500.000 por ciclo.',
+
+  // --- Configuración: Zona ---
+  surchargeGranAsuncionPercent: 'Porcentaje que se suma sobre el subtotal recurrente (precio base + recargos por ciclo) cuando la zona elegida en la cotización es "Gran Asunción".',
+  surchargeInteriorPercent: 'Porcentaje que se suma sobre el subtotal recurrente cuando la zona elegida en la cotización es "Interior". Suele ser mayor que el de Gran Asunción por la distancia.',
+
+  // --- Configuración: Auditores y operación ---
+  pdvPerAuditor: 'Cantidad de PDV que puede cubrir 1 solo auditor. Se usa únicamente cuando la cotización tiene el modo de auditores en "Automático": cantidad de auditores = PDV ÷ este número (redondeado siempre hacia arriba).',
+  costoTraslado: 'Costo de traslado por CADA auditor, por CADA viaje (se asume 1 viaje por ciclo). Se multiplica por la cantidad de auditores y por la cantidad de ciclos del proyecto. Solo se cobra si en la cotización se marca "Requiere traslado".',
+  viaticoPorAuditorPorDia: 'Viático por CADA auditor, por CADA día (se asume 1 día por ciclo). Se multiplica por la cantidad de auditores y de ciclos. Solo se cobra si se marca "Requiere viáticos".',
+  alojamientoPorAuditorPorNoche: 'Costo de alojamiento por CADA auditor, por CADA noche (se asume 1 noche por ciclo). Se multiplica por auditores y ciclos. Solo se cobra si se marca "Requiere alojamiento".',
+  costoVisitaAdicional: 'Costo por CADA visita adicional a un mismo PDV dentro de un ciclo (la primera visita ya está incluida en el precio base). Se multiplica por la cantidad de PDV. Ejemplo: si se piden 3 visitas por PDV, se cobran 2 visitas adicionales por cada PDV.',
+
+  // --- Configuración: Servicios adicionales (cargo único) ---
+  costoEvidenciaFotografica: 'Cargo ÚNICO (no se repite por PDV ni por ciclo) que se suma si la cotización marca "Evidencia fotográfica".',
+  costoInformeFinal: 'Cargo único que se suma si la cotización marca "Informe final". No se multiplica por PDV ni por ciclos.',
+  costoDashboard: 'Cargo único que se suma si la cotización marca "Dashboard de resultados". No se multiplica por PDV ni por ciclos.',
+  costoPresentacion: 'Cargo único que se suma si la cotización marca "Presentación de resultados". No se multiplica por PDV ni por ciclos.',
+  modoCosteoInforme: '"Precio fijo": se cobra solo el monto configurado arriba. "Según horas hombre": se cobra según las horas reales de la tarea "Elaboración de informe" (Tareas internas), a su perfil responsable. "Precio fijo + horas hombre": se suman ambos. En cualquier modo, si no se marca "Informe final" en la cotización, no se cobra nada.',
+  modoCosteoDashboard: '"Precio fijo": se cobra solo el monto configurado arriba. "Según horas hombre": se cobra según las horas reales de la tarea "Creación o actualización de dashboard", a su perfil responsable. "Precio fijo + horas hombre": se suman ambos.',
+  modoCosteoPresentacion: '"Precio fijo": se cobra solo el monto configurado arriba. "Según horas hombre": se cobra según las horas reales de la tarea "Elaboración de presentación", a su perfil responsable. "Precio fijo + horas hombre": se suman ambos.',
+
+  // --- Configuración: Comercial ---
+  gastosAdministrativosPercent: 'Porcentaje que se suma sobre el costo interno (mano de obra, traslados, viáticos, etc.) para cubrir gastos administrativos generales de la empresa (oficina, sistemas, etc.). Junto con "Contingencia", forma el "costo con gastos" sobre el que luego se aplica el margen.',
+  contingenciaPercent: 'Porcentaje adicional sobre el costo interno para cubrir imprevistos del proyecto (retrasos, PDV cerrados, cambios de último momento). Se suma junto con "Gastos administrativos".',
+  margenMinimoPercent: 'Porcentaje de margen que define el PRECIO MÍNIMO del rango comercial (el piso de negociación). Es el margen más ajustado que la empresa está dispuesta a aceptar.',
+  margenRecomendadoPercent: 'Porcentaje de margen que define el PRECIO RECOMENDADO (objetivo comercial). Es el que se usa como "Total estimado" principal de la cotización.',
+  margenMaximoPercent: 'Porcentaje de margen que define el PRECIO MÁXIMO sugerido del rango comercial. Útil como punto de partida para clientes con mayores exigencias, urgencia o poca sensibilidad al precio.',
+
+  // --- Nueva cotización: Parámetros opcionales del proyecto ---
+  nivelComplejidad: 'Nivel de dificultad del relevamiento. "Medio" y "Alto" agregan el % de tiempo adicional configurado en Configuración de costos, aumentando las horas de campo (y por lo tanto el costo).',
+  rondasCorreccionSolicitadas: 'Cantidad de rondas de corrección del informe que el cliente puede solicitar. Si supera las "Rondas incluidas sin costo" configuradas, se cobra el excedente según las horas del analista configuradas.',
+  reunionesSolicitadas: 'Cantidad de reuniones con el cliente incluidas en el proyecto. Si supera las "Reuniones incluidas sin costo" configuradas, se cobra el excedente según las horas del coordinador configuradas.',
+  requiereCapacitacionInicial: 'Si se marca, se suma UNA VEZ el costo de las horas de capacitación inicial al equipo de campo, configuradas en "Parámetros opcionales del proyecto", al costo hora del coordinador.',
+  requiereSupervisionCampo: 'Si se marca, se suma el costo de supervisión en campo (horas configuradas × cantidad de ciclos), al costo hora del coordinador.',
+  esUrgente: 'Si se marca, se aplica el "Recargo por urgencia" configurado sobre el costo con gastos, para reflejar el mayor esfuerzo de coordinar un proyecto con plazos comprimidos.',
+
+  // --- Configuración: Parámetros opcionales del proyecto ---
+  complejidadMediaPercent: 'Porcentaje de tiempo adicional que se suma a las horas de campo cuando la cotización indica "Nivel de complejidad: Medio".',
+  complejidadAltaPercent: 'Porcentaje de tiempo adicional que se suma a las horas de campo cuando la cotización indica "Nivel de complejidad: Alto".',
+  capacitacionInicialHoras: 'Cantidad de horas de capacitación/briefing inicial al equipo de campo, pagadas al costo hora del perfil "Coordinador de proyecto". Se cobra una sola vez, solo si se marca la opción en la cotización.',
+  supervisionCampoHorasPorCiclo: 'Horas de supervisión en campo (por parte del coordinador) en CADA ciclo del proyecto. Se cobra solo si se marca la opción en la cotización.',
+  aplicarRevisitasPercent: 'Activa el recargo por "% de revisitas estimadas" en TODAS las cotizaciones (no es un toggle por cotización). Úselo si su operación habitualmente necesita repetir una parte de las visitas.',
+  revisitasPercent: 'Porcentaje que se suma a las horas de campo para compensar visitas que deben repetirse (mala carga de datos, PDV no disponible en el horario, etc.). Solo se aplica si "Activar % de revisitas" está marcado.',
+  aplicarAusenciasPercent: 'Activa el recargo por "% de ausencias o PDV cerrados" en TODAS las cotizaciones.',
+  ausenciasPercent: 'Porcentaje que se suma a las horas de campo para compensar PDV cerrados o encargados ausentes el día de la visita. Solo se aplica si "Activar % de ausencias" está marcado.',
+  correccionesRondasIncluidas: 'Cantidad de rondas de corrección del informe final que están incluidas SIN costo adicional en cualquier cotización.',
+  horasPorRondaCorreccionExtra: 'Horas del perfil "Analista" que insume CADA ronda de corrección adicional, más allá de las incluidas.',
+  reunionesIncluidas: 'Cantidad de reuniones con el cliente incluidas SIN costo adicional en cualquier cotización.',
+  horasPorReunionExtra: 'Horas del perfil "Coordinador de proyecto" que insume CADA reunión adicional, más allá de las incluidas.',
+  aplicarGastoTelefonia: 'Si se activa, TODAS las cotizaciones suman el gasto de telefonía/datos móviles configurado, multiplicado por la cantidad de relevadores/shoppers necesarios.',
+  gastoTelefoniaPorRelevador: 'Costo de telefonía/datos móviles por cada relevador o mystery shopper asignado al proyecto. Solo se cobra si "Activar gasto de telefonía" está marcado.',
+  aplicarCostoHerramientas: 'Si se activa, TODAS las cotizaciones suman el costo de herramientas/licencias configurado, una sola vez por proyecto.',
+  costoHerramientasLicencias: 'Costo único de herramientas o licencias de software necesarias para el proyecto (por ejemplo, una app de relevamiento). Solo se cobra si "Activar costo de herramientas" está marcado.',
+  aplicarOtrosGastosOperativos: 'Si se activa, TODAS las cotizaciones suman el monto de "Otros gastos operativos" configurado, una sola vez por proyecto.',
+  otrosGastosOperativosMonto: 'Monto libre para cualquier otro gasto operativo no contemplado en las demás categorías. Solo se cobra si "Activar otros gastos operativos" está marcado.',
+  recargoUrgenciaPercent: 'Porcentaje adicional que se suma sobre el costo con gastos (junto con gastos administrativos y contingencia) cuando la cotización marca "Proyecto urgente".',
+  ivaPercent: 'Porcentaje de IVA que se aplica sobre el subtotal final, después de aplicar el descuento.',
+  descuentoMaximoPercent: 'Porcentaje máximo de descuento que se puede aplicar en una cotización. Si en "Nueva cotización" se ingresa un descuento mayor a este valor, el sistema lo recorta automáticamente.',
+
+  // --- Configuración: Mano de obra (horas hombre) ---
+  costoPorHoraHombre: 'Costo bruto (sin cargas sociales) de UNA hora de trabajo de un auditor. Este valor se combina con el Aguinaldo y el IPS patronal para obtener el costo REAL de la hora trabajada.',
+  horasPorVisitaPdv: 'Cantidad de horas que un auditor dedica, en promedio, a UNA visita a UN PDV. Se multiplica por la cantidad total de visitas del proyecto (PDV × visitas × ciclos) para obtener las horas-hombre totales.',
+  aguinaldoPercent: 'Porcentaje que representa el aguinaldo (13er sueldo) sobre el costo de la hora hombre. Por ley equivale a 1/12 del salario, es decir, aproximadamente 8.33%. Se suma al costo por hora para reflejar el costo laboral real.',
+  ipsPatronalPercent: 'Porcentaje de aporte patronal al IPS (Instituto de Previsión Social) sobre el costo de la hora hombre. Se suma al costo por hora, junto con el aguinaldo, para calcular el costo real de la mano de obra que se incluye en cada cotización.',
+  otrosCostosLaboralesPercent: 'Porcentaje adicional para cubrir otras cargas laborales (seguros, ropa de trabajo, equipamiento, etc.) que no sean aguinaldo ni IPS. Se suma al costo por hora del relevador.',
+  recargoNocturnoPercent: 'Porcentaje de recargo sobre el costo hora cargado (base + cargas sociales) cuando la cotización marca "Trabajo nocturno". Solo se aplica si esa opción está marcada.',
+  recargoFinDeSemanaPercent: 'Porcentaje de recargo sobre el costo hora cargado cuando la cotización marca "Fin de semana / feriado". Solo se aplica si esa opción está marcada. Se puede combinar con el recargo nocturno.',
+
+  // --- Configuración: Tiempos de relevamiento — Auditoría en PDV ---
+  auditPrepMinutos: 'Minutos fijos de ingreso, presentación y preparación al llegar a CADA PDV, antes de empezar a relevar productos.',
+  auditMinutosPorProducto: 'Minutos que toma relevar CADA producto dentro de un PDV. Se multiplica por la cantidad de productos por PDV de la cotización.',
+  auditMinutosEvidenciaPorProducto: 'Minutos adicionales para fotografiar/evidenciar CADA producto relevado. Se multiplica por la cantidad de productos por PDV.',
+  auditMinutosCierreFormulario: 'Minutos para completar y enviar el formulario o checklist, una vez terminado el relevamiento de un PDV.',
+  auditMinutosEsperaPromedio: 'Minutos promedio de espera dentro del PDV (por ejemplo, esperar a un encargado) antes de poder relevar.',
+  auditMinutosTrasladoEntrePdv: 'Minutos promedio que toma trasladarse desde un PDV hasta el siguiente. Se multiplica por la cantidad de visitas totales del proyecto.',
+  auditJornadaEfectivaHoras: 'Cantidad de horas de trabajo de campo realmente productivas que tiene un relevador por día (descontando almuerzo y tiempos muertos). Se usa para calcular cuántos PDV puede cubrir una persona por día.',
+  plazoDeseadoDiasCiclo: 'Cantidad de días hábiles en los que se desea completar el relevamiento de TODOS los PDV dentro de un mismo ciclo. A menor plazo, se recomiendan más relevadores trabajando en simultáneo.',
+  requiresTrabajoNocturno: 'Si se marca, se aplica el "Recargo por trabajo nocturno" configurado sobre el costo hora de los relevadores.',
+  requiresFinDeSemana: 'Si se marca, se aplica el "Recargo por fin de semana / feriado" configurado sobre el costo hora de los relevadores. Se puede combinar con el recargo nocturno.',
+
+  // --- Configuración: Tiempo del relevador — Mystery Shopper ---
+  msMinutosTraslado: 'Minutos de traslado (ida y vuelta) para llegar a CADA visita presencial.',
+  msMinutosEspera: 'Minutos de espera dentro del comercio antes de poder interactuar con el asesor o vendedor.',
+  msMinutosInteraccion: 'Minutos de interacción real con el asesor/vendedor durante la visita.',
+  msMinutosPorProductoServicio: 'Minutos que toma relevar CADA producto o servicio consultado durante la visita. Se multiplica por la cantidad indicada en "Productos o servicios a relevar por visita" de la cotización.',
+  msMinutosCargaEvidencia: 'Minutos para cargar las fotos/evidencias tomadas durante la visita.',
+  msMinutosInformeVisita: 'Minutos para completar el informe o checklist de esa visita puntual (distinto del informe final del proyecto).',
+  msMinutosGestionRemota: 'Minutos que toma gestionar UNA interacción por canal remoto (WhatsApp, Redes o Web): contacto + seguimiento + registro.',
+  msProductosPorVisita: 'Cantidad aproximada de productos o servicios que se consultan/evalúan en CADA visita presencial. Afecta directamente el tiempo (y por lo tanto el costo) de cada visita.',
+
+  // --- Configuración: Mystery Shopper — Trabajo de campo ---
+  msTrasladoPorVisitaHoras: 'Horas que un mystery shopper dedica a trasladarse (ida y vuelta) entre puntos, por cada visita presencial. Junto con "Espera + interacción" y "Carga de informe" forman las horas totales por visita.',
+  msEsperaInteraccionHoras: 'Horas reales que el mystery shopper pasa dentro de la sucursal: espera en fila + interacción con el asesor.',
+  msCargaInformeHoras: 'Horas que toma cargar el checklist, las fotos y las notas de evidencia después de cada visita presencial.',
+  msJornadaEfectivaHorasDia: 'Cantidad de horas efectivas de trabajo de campo que tiene un mystery shopper por día, descontando almuerzo y tiempos muertos. Se usa para calcular cuántas visitas puede hacer una persona por día y cuántos shoppers se necesitan para cumplir el plazo deseado.',
+
+  // --- Configuración: Mystery Shopper — Canales remotos ---
+  msTiempoGestionInteraccionHoras: 'Horas que toma gestionar UNA interacción por canal remoto (WhatsApp, Redes o Web): contacto + seguimiento + registro. No incluye el tiempo de espera de la respuesta de la empresa monitoreada.',
+
+  // --- Configuración: Mystery Shopper — Coordinación y análisis ---
+  msHorasDisenoGuion: 'Horas dedicadas a diseñar el guion de la interacción y hacer el briefing a los mystery shoppers. Es una tarea única del proyecto, no se repite por visita ni por interacción.',
+  msHorasAnalisisInforme: 'Horas dedicadas a consolidar los resultados, armar la matriz comparativa y redactar el informe ejecutivo final. Es una tarea única del proyecto.',
+
+  // --- Configuración: Mystery Shopper — Costos unitarios ---
+  msCostoHoraShopper: 'Costo por hora de trabajo de CADA mystery shopper/relevador (tanto para las visitas presenciales como para la gestión de canales remotos). No incluye cargas sociales adicionales.',
+  msCostoHoraAnalista: 'Costo por hora de trabajo del analista/coordinador que diseña el guion y arma el informe final. Suele ser un valor más alto que el del mystery shopper, por tratarse de un perfil de análisis.',
+  msViaticoPorVisita: 'Costo de movilidad (viaje corto en auto/taxi dentro de Asunción, ida y vuelta) por CADA visita presencial. No incluye alojamiento ni comida.',
+};
+
+let currentPopoverEl = null;
+
+function closeInfoPopover() {
+  if (currentPopoverEl) {
+    if (currentPopoverEl._icon) currentPopoverEl._icon.classList.remove('info-icon-active');
+    currentPopoverEl.remove();
+    currentPopoverEl = null;
+  }
+}
+
+function abrirInfoPopover(icon) {
+  const key = icon.getAttribute('data-info');
+  const texto = INFO_TEXTS[key] || 'No hay información adicional para este campo.';
+
+  const pop = document.createElement('div');
+  pop.className = 'info-popover';
+  pop.textContent = texto;
+  document.body.appendChild(pop);
+
+  const rect = icon.getBoundingClientRect();
+  const popWidth = Math.min(300, window.innerWidth - 32);
+  let left = rect.left;
+  if (left + popWidth > window.innerWidth - 16) left = window.innerWidth - popWidth - 16;
+  if (left < 16) left = 16;
+
+  // Medir alto real del popover para decidir si va arriba o abajo del icono
+  const popHeight = pop.getBoundingClientRect().height;
+  let top = rect.bottom + 10;
+  if (top + popHeight > window.innerHeight - 16) {
+    top = rect.top - popHeight - 10;
+    pop.classList.add('popover-arrow-bottom');
+  }
+  if (top < 8) top = 8;
+
+  pop.style.width = popWidth + 'px';
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+
+  icon.classList.add('info-icon-active');
+  pop._icon = icon;
+  currentPopoverEl = pop;
+}
+
+function initInfoTooltips() {
+  document.body.addEventListener('click', (e) => {
+    const icon = e.target.closest('.info-icon');
+    if (icon) {
+      e.preventDefault();
+      e.stopPropagation();
+      const wasThisOpen = icon.classList.contains('info-icon-active');
+      closeInfoPopover();
+      if (!wasThisOpen) abrirInfoPopover(icon);
+      return;
+    }
+    if (e.target.closest('.info-popover')) return; // clic dentro del popover no lo cierra
+    closeInfoPopover();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeInfoPopover();
+  });
+
+  window.addEventListener('scroll', closeInfoPopover, true);
+  window.addEventListener('resize', closeInfoPopover);
+}
+
+/* ==========================================================================
+   4. UI - NAVEGACION
+   ========================================================================== */
+
+const APP_STATE = {
+  currentView: 'nueva',
+  editingQuoteId: null, // si estamos editando una cotización del historial
+  lastResult: null, // último resultado calculado (para exportar / guardar)
+};
+
+function initNavegacion() {
+  document.querySelectorAll('.nav-link').forEach((link) => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const view = link.getAttribute('data-view');
+      cambiarVista(view);
+    });
+  });
+
+  document.getElementById('menuToggle').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('open');
+  });
+}
+
+function cambiarVista(view) {
+  APP_STATE.currentView = view;
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+  document.getElementById('view-' + view).classList.add('active');
+
+  document.querySelectorAll('.nav-link').forEach((l) => l.classList.remove('active'));
+  document.querySelector(`.nav-link[data-view="${view}"]`).classList.add('active');
+
+  document.getElementById('sidebar').classList.remove('open');
+
+  if (view === 'historial') renderHistorial();
+  if (view === 'config') renderConfiguracion();
+}
+
+/* ==========================================================================
+   5. UI - NUEVA COTIZACION
+   ========================================================================== */
+
+function initFormularioCotizacion() {
+  document.getElementById('quoteDate').valueAsDate = new Date();
+
+  document.getElementById('serviceType').addEventListener('change', (e) => {
+    actualizarCamposPorTipoServicio(e.target.value);
+  });
+
+  document.getElementById('zone').addEventListener('change', (e) => {
+    const showDept = e.target.value === 'interior' || e.target.value === 'granAsuncion';
+    const showSplit = e.target.value === 'combinada';
+    document.getElementById('departmentWrapper').style.display = showDept ? 'block' : 'none';
+    document.getElementById('zoneSplitWrapper').style.display = showSplit ? 'block' : 'none';
+  });
+
+  document.getElementById('auditorsMode').addEventListener('change', (e) => {
+    document.getElementById('auditorsCountWrapper').style.display =
+      e.target.value === 'manual' ? 'block' : 'none';
+  });
+
+  attachMilesFormatting(document.getElementById('extraCostManual'));
+
+  document.getElementById('formCotizacion').addEventListener('submit', (e) => {
+    e.preventDefault();
+    procesarCotizacion();
+  });
+
+  document.getElementById('btnLimpiarForm').addEventListener('click', () => {
+    if (confirm('¿Limpiar todos los campos del formulario?')) {
+      document.getElementById('formCotizacion').reset();
+      document.getElementById('quoteDate').valueAsDate = new Date();
+      document.getElementById('resultadoWrapper').innerHTML = '';
+      document.getElementById('departmentWrapper').style.display = 'none';
+      document.getElementById('zoneSplitWrapper').style.display = 'none';
+      actualizarCamposPorTipoServicio('auditoria');
+      attachMilesFormatting(document.getElementById('extraCostManual'));
+      APP_STATE.editingQuoteId = null;
+      APP_STATE.lastResult = null;
+    }
+  });
+}
+
+/**
+ * Muestra u oculta los bloques de campos del formulario de cotización según
+ * el tipo de servicio elegido (Auditoría en PDV o Mystery Shopper), ya que
+ * cada servicio pide datos distintos.
+ */
+function actualizarCamposPorTipoServicio(tipo) {
+  const esMS = tipo === 'mysteryShopper';
+  document.getElementById('fieldsetAuditoria').style.display = esMS ? 'none' : '';
+  document.getElementById('fieldsetServiciosAdicionales').style.display = esMS ? 'none' : '';
+  document.getElementById('fieldsetMysteryShopper').style.display = esMS ? '' : 'none';
+}
+
+function leerInputsFormulario() {
+  const f = document.getElementById('formCotizacion');
+  return {
+    clientName: f.clientName.value,
+    contactName: f.contactName.value,
+    quoteDate: f.quoteDate.value,
+    projectName: f.projectName.value,
+    validity: f.validity.value,
+    notes: f.notes.value,
+
+    serviceType: f.serviceType.value,
+    pdvCount: f.pdvCount.value,
+    productsPerPdv: f.productsPerPdv.value,
+    visitsPerPdv: f.visitsPerPdv.value,
+    frequency: f.frequency.value,
+    durationMonths: f.durationMonths.value,
+    zone: f.zone.value,
+    department: f.department.value,
+    pdvAsuncion: f.pdvAsuncion.value,
+    pdvGranAsuncion: f.pdvGranAsuncion.value,
+    pdvInterior: f.pdvInterior.value,
+    auditorsMode: f.auditorsMode.value,
+    auditorsCount: f.auditorsCount.value,
+    plazoDeseadoDiasCiclo: f.plazoDeseadoDiasCiclo.value,
+
+    msAseguradorasCount: f.msAseguradorasCount.value,
+    msSucursalesPresencial: f.msSucursalesPresencial.value,
+    msCanalesRemotos: f.msCanalesRemotos.value,
+    msRondas: f.msRondas.value,
+    msPlazoDeseadoDias: f.msPlazoDeseadoDias.value,
+    msProductosPorVisita: f.msProductosPorVisita.value,
+
+    requiresTraslado: f.requiresTraslado.checked,
+    requiresAlojamiento: f.requiresAlojamiento.checked,
+    requiresViaticos: f.requiresViaticos.checked,
+    requiresFotografia: f.requiresFotografia.checked,
+    requiresInforme: f.requiresInforme.checked,
+    requiresDashboard: f.requiresDashboard.checked,
+    requiresPresentacion: f.requiresPresentacion.checked,
+    requiresTrabajoNocturno: f.requiresTrabajoNocturno.checked,
+    requiresFinDeSemana: f.requiresFinDeSemana.checked,
+    nivelComplejidad: f.nivelComplejidad.value,
+    rondasCorreccionSolicitadas: f.rondasCorreccionSolicitadas.value,
+    reunionesSolicitadas: f.reunionesSolicitadas.value,
+    requiereCapacitacionInicial: f.requiereCapacitacionInicial.checked,
+    requiereSupervisionCampo: f.requiereSupervisionCampo.checked,
+    esUrgente: f.esUrgente.checked,
+
+    discountPercent: f.discountPercent.value || 0,
+    extraCostManual: parseMilesValue(f.extraCostManual.value),
+    extraCostReason: f.extraCostReason.value,
+  };
+}
+
+function procesarCotizacion() {
+  const inputs = leerInputsFormulario();
+  const errores = validarFormularioCotizacion(inputs);
+  const errorBox = document.getElementById('formErrors');
+
+  if (errores.length > 0) {
+    errorBox.innerHTML = '<strong>Corrija los siguientes errores:</strong><ul>' +
+      errores.map((e) => `<li>${e}</li>`).join('') + '</ul>';
+    errorBox.style.display = 'block';
+    errorBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  errorBox.style.display = 'none';
+  errorBox.innerHTML = '';
+
+  const config = getConfig();
+  const resultado = calcularCotizacion(inputs, config);
+  APP_STATE.lastResult = resultado;
+  renderResultado(resultado, config);
+}
+
+/**
+ * Construye el HTML de "Alcance del servicio" + "Desglose del cálculo" +
+ * tarjetas de estadísticas para una cotización de Auditoría en PDV.
+ */
+/**
+ * Construye el bloque de "Rango comercial" (mínimo/recomendado/máximo) y el
+ * selector de "Precio final que se presentará al cliente", compartido entre
+ * Auditoría en PDV y Mystery Shopper.
+ */
+function construirBloqueRangoComercial(resultado, config) {
+  const { desglose, inputs } = resultado;
+  const r = desglose.rangoComercial;
+  const modo = desglose.precioFinalModo || 'recomendado';
+
+  return `
+      <div class="result-block">
+        <h3>Costo interno vs. rango comercial</h3>
+        <table class="breakdown-table">
+          <tbody>
+            <tr><td>Costo interno total</td><td>${formatearMoneda(desglose.costoInternoTotal, config.moneda)}</td></tr>
+            <tr><td>Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Costo con gastos</td><td>${formatearMoneda(desglose.costoConGastos, config.moneda)}</td></tr>
+          </tbody>
+        </table>
+        <div class="result-grid" style="margin-top:12px;">
+          <div class="stat-card"><span class="stat-label">Precio mínimo (margen ${desglose.margenMinimoPercent}%)</span><span class="stat-value">${formatearMoneda(r.minimo, config.moneda)}</span></div>
+          <div class="stat-card stat-card-margin"><span class="stat-label">Precio recomendado (margen ${desglose.margenPercent}%)</span><span class="stat-value">${formatearMoneda(r.recomendado, config.moneda)}</span></div>
+          <div class="stat-card"><span class="stat-label">Precio máximo (margen ${desglose.margenMaximoPercent}%)</span><span class="stat-value">${formatearMoneda(r.maximo, config.moneda)}</span></div>
+        </div>
+      </div>
+
+      <div class="result-block">
+        <h3>Precio final que se presentará al cliente</h3>
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="precioFinalModoSelect">Elegir precio final</label>
+            <select id="precioFinalModoSelect">
+              <option value="minimo" ${modo === 'minimo' ? 'selected' : ''}>Usar precio mínimo</option>
+              <option value="recomendado" ${modo === 'recomendado' ? 'selected' : ''}>Usar precio recomendado</option>
+              <option value="maximo" ${modo === 'maximo' ? 'selected' : ''}>Usar precio máximo</option>
+              <option value="manual" ${modo === 'manual' ? 'selected' : ''}>Ingresar otro precio manualmente</option>
+            </select>
+          </div>
+          <div class="form-field" id="precioFinalManualWrapper" style="display:${modo === 'manual' ? 'block' : 'none'};">
+            <label for="precioFinalManualInput">Precio manual (Gs.)</label>
+            <input type="text" id="precioFinalManualInput" inputmode="numeric" value="${formatMilesDisplay(inputs.precioFinalManual || 0)}">
+          </div>
+        </div>
+
+        ${desglose.advertenciaPrecioBajoMinimo ? `<div class="alert alert-warning">El precio seleccionado se encuentra por debajo del margen mínimo configurado. Puede continuar, pero revise si es una decisión comercial intencional.</div>` : ''}
+
+        <div class="result-grid">
+          <div class="stat-card stat-card-margin"><span class="stat-label">Precio final elegido</span><span class="stat-value">${formatearMoneda(desglose.precioFinalElegido, config.moneda)}</span></div>
+          <div class="stat-card"><span class="stat-label">Margen real (Gs.)</span><span class="stat-value">${formatearMoneda(desglose.margenRealGs, config.moneda)}</span></div>
+          <div class="stat-card"><span class="stat-label">Margen real (%)</span><span class="stat-value">${desglose.margenRealPercent.toFixed(1)}%</span></div>
+        </div>
+      </div>
+  `;
+}
+
+/**
+ * Recalcula solamente el "precio final elegido" (y su margen real) sobre el
+ * último resultado calculado, sin tener que rehacer toda la cotización, y
+ * vuelve a pintar el panel de resultado con la nueva selección.
+ */
+function actualizarPrecioFinalEnResultado(nuevoModo, precioManual) {
+  const resultado = APP_STATE.lastResult;
+  if (!resultado) return;
+  const config = getConfig();
+  resultado.inputs.precioFinalModo = nuevoModo;
+  resultado.inputs.precioFinalManual = precioManual;
+  const info = calcularPrecioFinalElegido(resultado.inputs, resultado.desglose.rangoComercial, resultado.desglose.costoConGastos, resultado.desglose.ivaPercent);
+  resultado.desglose.precioFinalModo = info.modo;
+  resultado.desglose.precioFinalElegido = info.precioFinal;
+  resultado.desglose.margenRealGs = info.margenRealGs;
+  resultado.desglose.margenRealPercent = info.margenRealPercent;
+  resultado.desglose.advertenciaPrecioBajoMinimo = info.advertenciaPrecioBajoMinimo;
+  renderResultado(resultado, config);
+}
+
+function construirCuerpoResultadoAuditoria(resultado, config) {
+  const { inputs, desglose, ciclos, totalProductos, totalVisitas, costoPromedioPorPdv, costoPromedioPorVisita, costoMensualEstimado } = resultado;
+
+  const serviciosAdicionales = [];
+  if (inputs.requiresTraslado) serviciosAdicionales.push('Traslado');
+  if (inputs.requiresAlojamiento) serviciosAdicionales.push('Alojamiento');
+  if (inputs.requiresViaticos) serviciosAdicionales.push('Viáticos');
+  if (inputs.requiresFotografia) serviciosAdicionales.push('Evidencia fotográfica');
+  if (inputs.requiresInforme) serviciosAdicionales.push('Informe final');
+  if (inputs.requiresDashboard) serviciosAdicionales.push('Dashboard de resultados');
+  if (inputs.requiresPresentacion) serviciosAdicionales.push('Presentación de resultados');
+
+  const zonaLabel = ZONA_LABELS[inputs.zone] || inputs.zone;
+  const frecuenciaLabel = { unica: 'Única', semanal: 'Semanal', quincenal: 'Quincenal', mensual: 'Mensual' }[inputs.frequency] || inputs.frequency;
+  const detalleZonaCombinada = inputs.zone === 'combinada'
+    ? ` (Asunción: ${inputs.pdvAsuncion || 0} · Gran Asunción: ${inputs.pdvGranAsuncion || 0} · Interior: ${inputs.pdvInterior || 0})`
+    : '';
+
+  return `
+      <div class="result-grid">
+        <div class="result-block">
+          <h3>Datos del cliente</h3>
+          <dl>
+            <dt>Cliente</dt><dd>${inputs.clientName}</dd>
+            <dt>Contacto</dt><dd>${inputs.contactName || '-'}</dd>
+            <dt>Fecha</dt><dd>${inputs.quoteDate}</dd>
+            <dt>Vigencia</dt><dd>${inputs.validity ? inputs.validity + ' días' : '-'}</dd>
+          </dl>
+        </div>
+        <div class="result-block">
+          <h3>Alcance del servicio</h3>
+          <dl>
+            <dt>PDV</dt><dd>${inputs.pdvCount}</dd>
+            <dt>Productos por PDV</dt><dd>${inputs.productsPerPdv}</dd>
+            <dt>Total productos a auditar</dt><dd>${totalProductos.toLocaleString('es-PY')}</dd>
+            <dt>Zona</dt><dd>${zonaLabel}${inputs.department ? ' - ' + inputs.department : ''}${detalleZonaCombinada}</dd>
+            <dt>Frecuencia</dt><dd>${frecuenciaLabel}</dd>
+            <dt>Duración</dt><dd>${inputs.durationMonths} mes(es) · ${ciclos} ciclo(s) de visita</dd>
+            <dt>Visitas totales</dt><dd>${totalVisitas}</dd>
+            <dt>Auditores requeridos</dt><dd>${desglose.cantidadAuditores}</dd>
+          </dl>
+        </div>
+      </div>
+
+      ${serviciosAdicionales.length ? `<div class="result-block"><h3>Servicios adicionales</h3><p>${serviciosAdicionales.join(', ')}</p></div>` : ''}
+
+      <div class="result-block">
+        <h3>Desglose del cálculo (uso interno)</h3>
+        <table class="breakdown-table">
+          <tbody>
+            <tr><td>Precio base por ciclo</td><td>${formatearMoneda(desglose.precioBaseCiclo, config.moneda)}</td></tr>
+            <tr><td>Recargo por productos adicionales (por ciclo)</td><td>${formatearMoneda(desglose.recargoProductosCiclo, config.moneda)}</td></tr>
+            <tr><td>Recargo por visitas adicionales (por ciclo)</td><td>${formatearMoneda(desglose.recargoVisitasCiclo, config.moneda)}</td></tr>
+            <tr><td>Subtotal por ciclo</td><td>${formatearMoneda(desglose.subtotalPorCiclo, config.moneda)}</td></tr>
+            <tr><td>Subtotal recurrente (× ${ciclos} ciclos)</td><td>${formatearMoneda(desglose.subtotalRecurrente, config.moneda)}</td></tr>
+            <tr><td>Recargo de zona (${desglose.porcentajeZona.toFixed(2)}%)</td><td>${formatearMoneda(desglose.recargoZona, config.moneda)}</td></tr>
+            <tr><td>Traslado</td><td>${formatearMoneda(desglose.costoTraslado, config.moneda)}</td></tr>
+            <tr><td>Viáticos</td><td>${formatearMoneda(desglose.costoViaticos, config.moneda)}</td></tr>
+            <tr><td>Alojamiento</td><td>${formatearMoneda(desglose.costoAlojamiento, config.moneda)}</td></tr>
+            <tr><td>Evidencia fotográfica</td><td>${formatearMoneda(desglose.costoFotografia, config.moneda)}</td></tr>
+            <tr><td>Informe final</td><td>${formatearMoneda(desglose.costoInforme, config.moneda)}</td></tr>
+            <tr><td>Dashboard</td><td>${formatearMoneda(desglose.costoDashboard, config.moneda)}</td></tr>
+            <tr><td>Presentación de resultados</td><td>${formatearMoneda(desglose.costoPresentacion, config.moneda)}</td></tr>
+            <tr><td>Mano de obra (${desglose.horasHombreTotales.toLocaleString('es-PY')} horas c/cargas sociales)</td><td>${formatearMoneda(desglose.costoManoDeObra, config.moneda)}</td></tr>
+            <tr><td>Costo adicional manual ${inputs.extraCostReason ? '(' + inputs.extraCostReason + ')' : ''}</td><td>${formatearMoneda(desglose.costoAdicionalManual, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Subtotal antes de margen</td><td>${formatearMoneda(desglose.subtotalAntesMargen, config.moneda)}</td></tr>
+            <tr><td>Margen de ganancia (${desglose.margenPercent}%)</td><td>${formatearMoneda(desglose.margenComercial, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Subtotal con margen</td><td>${formatearMoneda(desglose.subtotalConMargen, config.moneda)}</td></tr>
+            <tr class="discount-row"><td>Descuento (${desglose.descuentoPercent}%)</td><td>- ${formatearMoneda(desglose.montoDescuento, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Subtotal</td><td>${formatearMoneda(desglose.subtotalConDescuento, config.moneda)}</td></tr>
+            <tr><td>IVA (${desglose.ivaPercent}%)</td><td>${formatearMoneda(desglose.montoIva, config.moneda)}</td></tr>
+            <tr class="total-row"><td>TOTAL ESTIMADO</td><td>${formatearMoneda(desglose.total, config.moneda)}</td></tr>
+            <tr><td>Costo mensual estimado (promedio)</td><td>${formatearMoneda(costoMensualEstimado, config.moneda)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="result-grid">
+        <div class="stat-card"><span class="stat-label">Costo mensual estimado</span><span class="stat-value">${formatearMoneda(costoMensualEstimado, config.moneda)}</span></div>
+        <div class="stat-card"><span class="stat-label">Costo promedio por PDV</span><span class="stat-value">${formatearMoneda(costoPromedioPorPdv, config.moneda)}</span></div>
+        <div class="stat-card"><span class="stat-label">Costo promedio por visita</span><span class="stat-value">${formatearMoneda(costoPromedioPorVisita, config.moneda)}</span></div>
+        <div class="stat-card stat-card-margin"><span class="stat-label">Margen de ganancia (${desglose.margenPercent}%)</span><span class="stat-value">${formatearMoneda(desglose.margenComercial, config.moneda)}</span></div>
+      </div>
+
+      ${construirBloqueRangoComercial(resultado, config)}
+  `;
+}
+
+/**
+ * Construye el HTML de "Alcance del servicio" + "Desglose del cálculo" +
+ * tarjetas de estadísticas para una cotización de Mystery Shopper.
+ */
+function construirCuerpoResultadoMysteryShopper(resultado, config) {
+  const { inputs, desglose, totalVisitas, totalInteracciones, costoPromedioPorSucursal, costoPromedioPorAseguradora } = resultado;
+
+  return `
+      <div class="result-grid">
+        <div class="result-block">
+          <h3>Datos del cliente</h3>
+          <dl>
+            <dt>Cliente</dt><dd>${inputs.clientName}</dd>
+            <dt>Contacto</dt><dd>${inputs.contactName || '-'}</dd>
+            <dt>Fecha</dt><dd>${inputs.quoteDate}</dd>
+            <dt>Vigencia</dt><dd>${inputs.validity ? inputs.validity + ' días' : '-'}</dd>
+          </dl>
+        </div>
+        <div class="result-block">
+          <h3>Alcance del servicio</h3>
+          <dl>
+            <dt>Empresas a monitorear</dt><dd>${inputs.msAseguradorasCount || 0}</dd>
+            <dt>Sucursales a visitar (presencial)</dt><dd>${inputs.msSucursalesPresencial || 0}</dd>
+            <dt>Canales remotos por empresa</dt><dd>${inputs.msCanalesRemotos || 0}</dd>
+            <dt>Rondas de relevamiento</dt><dd>${inputs.msRondas || 1}</dd>
+            <dt>Plazo deseado</dt><dd>${inputs.msPlazoDeseadoDias || 0} días hábiles</dd>
+            <dt>Visitas presenciales totales</dt><dd>${totalVisitas}</dd>
+            <dt>Interacciones remotas totales</dt><dd>${totalInteracciones}</dd>
+            <dt>Mystery shoppers necesarios</dt><dd>${desglose.shoppersNecesarios}</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="result-block">
+        <h3>Desglose del cálculo (uso interno)</h3>
+        <table class="breakdown-table">
+          <tbody>
+            <tr><td colspan="2"><strong>A. Trabajo de campo presencial</strong></td></tr>
+            <tr><td>Horas por visita (traslado + espera/atención + carga informe)</td><td>${desglose.horasPorVisita.toLocaleString('es-PY')} horas</td></tr>
+            <tr><td>Visitas totales (sucursales × rondas)</td><td>${desglose.visitasTotales}</td></tr>
+            <tr><td>Horas-hombre totales de campo</td><td>${desglose.horasHombreCampo.toLocaleString('es-PY')} horas</td></tr>
+            <tr><td>Visitas posibles por día, por shopper</td><td>${desglose.visitasPorDiaPorShopper}</td></tr>
+            <tr><td>Días necesarios con 1 sola persona</td><td>${desglose.diasNecesariosConUnaPersona}</td></tr>
+            <tr><td>Mystery shoppers necesarios para el plazo deseado</td><td>${desglose.shoppersNecesarios}</td></tr>
+            <tr><td>Costo mano de obra — campo presencial</td><td>${formatearMoneda(desglose.costoCampoManoObra, config.moneda)}</td></tr>
+
+            <tr><td colspan="2"><strong>B. Viáticos</strong></td></tr>
+            <tr><td>Viáticos totales (movilidad, solo Asunción)</td><td>${formatearMoneda(desglose.viaticosTotales, config.moneda)}</td></tr>
+
+            <tr><td colspan="2"><strong>C. Canales remotos (WhatsApp / Redes / Web)</strong></td></tr>
+            <tr><td>Interacciones totales (empresas × canales × rondas)</td><td>${desglose.interaccionesTotales}</td></tr>
+            <tr><td>Horas-hombre totales — gestión remota</td><td>${desglose.horasHombreRemoto.toLocaleString('es-PY')} horas</td></tr>
+            <tr><td>Costo mano de obra — canales remotos</td><td>${formatearMoneda(desglose.costoRemotoManoObra, config.moneda)}</td></tr>
+
+            <tr><td colspan="2"><strong>D. Coordinación y análisis</strong></td></tr>
+            <tr><td>Horas totales (diseño de guion + análisis e informe)</td><td>${desglose.horasCoordinacion.toLocaleString('es-PY')} horas</td></tr>
+            <tr><td>Costo coordinación y análisis</td><td>${formatearMoneda(desglose.costoCoordinacion, config.moneda)}</td></tr>
+
+            <tr><td colspan="2"><strong>E. Resumen y total</strong></td></tr>
+            <tr><td>Subtotal mano de obra (campo + remoto + coordinación)</td><td>${formatearMoneda(desglose.subtotalManoObra, config.moneda)}</td></tr>
+            <tr><td>Subtotal general (mano de obra + viáticos)</td><td>${formatearMoneda(desglose.subtotalGeneral, config.moneda)}</td></tr>
+            <tr><td>Costo adicional manual ${inputs.extraCostReason ? '(' + inputs.extraCostReason + ')' : ''}</td><td>${formatearMoneda(desglose.costoAdicionalManual, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Subtotal antes de margen</td><td>${formatearMoneda(desglose.subtotalAntesMargen, config.moneda)}</td></tr>
+            <tr><td>Margen de ganancia (${desglose.margenPercent}%)</td><td>${formatearMoneda(desglose.margenComercial, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Subtotal con margen</td><td>${formatearMoneda(desglose.subtotalConMargen, config.moneda)}</td></tr>
+            <tr class="discount-row"><td>Descuento (${desglose.descuentoPercent}%)</td><td>- ${formatearMoneda(desglose.montoDescuento, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Subtotal</td><td>${formatearMoneda(desglose.subtotalConDescuento, config.moneda)}</td></tr>
+            <tr><td>IVA (${desglose.ivaPercent}%)</td><td>${formatearMoneda(desglose.montoIva, config.moneda)}</td></tr>
+            <tr class="total-row"><td>TOTAL PROPUESTA</td><td>${formatearMoneda(desglose.total, config.moneda)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="result-grid">
+        <div class="stat-card"><span class="stat-label">Dotación de campo (shoppers)</span><span class="stat-value">${desglose.shoppersNecesarios} persona(s)</span></div>
+        <div class="stat-card"><span class="stat-label">Costo promedio por sucursal</span><span class="stat-value">${formatearMoneda(costoPromedioPorSucursal, config.moneda)}</span></div>
+        <div class="stat-card"><span class="stat-label">Costo promedio por empresa monitoreada</span><span class="stat-value">${formatearMoneda(costoPromedioPorAseguradora, config.moneda)}</span></div>
+        <div class="stat-card stat-card-margin"><span class="stat-label">Margen de ganancia (${desglose.margenPercent}%)</span><span class="stat-value">${formatearMoneda(desglose.margenComercial, config.moneda)}</span></div>
+      </div>
+
+      ${construirBloqueRangoComercial(resultado, config)}
+  `;
+}
+
+function renderResultado(resultado, config) {
+  const { inputs, desglose, isCustom, costoMensualEstimado } = resultado;
+  const wrapper = document.getElementById('resultadoWrapper');
+  const esMS = esMysteryShopper(inputs);
+
+  const numeroCotizacion = APP_STATE.editingQuoteId
+    ? (getHistory().find((q) => q.id === APP_STATE.editingQuoteId)?.numero || getNextQuoteNumber())
+    : getNextQuoteNumberPreview();
+
+  const cuerpo = esMS
+    ? construirCuerpoResultadoMysteryShopper(resultado, config)
+    : construirCuerpoResultadoAuditoria(resultado, config);
+
+  wrapper.innerHTML = `
+    <div class="card result-card">
+      <div class="result-header">
+        <div>
+          <h2>Cotización ${numeroCotizacion}</h2>
+          <p class="muted">${inputs.clientName} · ${SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType} · ${inputs.projectName || 'Sin nombre de proyecto'}</p>
+        </div>
+        <div class="total-badge">
+          <span class="total-label">Total estimado</span>
+          <span class="total-value">${formatearMoneda(desglose.total, config.moneda)}</span>
+          ${esMS ? '' : `<span class="total-secondary">≈ ${formatearMoneda(costoMensualEstimado, config.moneda)} / mes</span>`}
+        </div>
+      </div>
+
+      ${isCustom ? `<div class="alert alert-warning">Este servicio requiere una cotización personalizada. El cálculo mostrado es <strong>estimado y está sujeto a revisión</strong>.</div>` : ''}
+
+      ${cuerpo}
+
+      <div class="alert alert-info">
+        Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo, ubicación de los puntos de venta y requerimientos adicionales del cliente.
+      </div>
+
+      ${inputs.notes ? `<div class="result-block"><h3>Observaciones</h3><p>${inputs.notes}</p></div>` : ''}
+
+      <div class="button-row">
+        <button class="btn btn-secondary" id="btnVistaPrevia">Vista previa</button>
+        <button class="btn btn-secondary" id="btnImprimir">Imprimir</button>
+        <button class="btn btn-secondary" id="btnPdfCliente">Descargar PDF (cliente)</button>
+        <button class="btn btn-secondary" id="btnPdfInterno">Descargar PDF (interno)</button>
+        <button class="btn btn-primary" id="btnGuardarCotizacion">Guardar en historial</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btnVistaPrevia').addEventListener('click', () => mostrarVistaPrevia(resultado, config, numeroCotizacion));
+  document.getElementById('btnImprimir').addEventListener('click', () => window.print());
+  document.getElementById('btnPdfCliente').addEventListener('click', () => generarPdf(resultado, config, numeroCotizacion, 'cliente'));
+  document.getElementById('btnPdfInterno').addEventListener('click', () => generarPdf(resultado, config, numeroCotizacion, 'interno'));
+  document.getElementById('btnGuardarCotizacion').addEventListener('click', () => guardarCotizacionEnHistorial(resultado, numeroCotizacion));
+
+  const selectPrecioFinal = document.getElementById('precioFinalModoSelect');
+  const manualWrapper = document.getElementById('precioFinalManualWrapper');
+  const manualInput = document.getElementById('precioFinalManualInput');
+  if (manualInput) attachMilesFormatting(manualInput);
+  if (selectPrecioFinal) {
+    selectPrecioFinal.addEventListener('change', (e) => {
+      const modo = e.target.value;
+      if (modo === 'manual') {
+        manualWrapper.style.display = 'block';
+      } else {
+        actualizarPrecioFinalEnResultado(modo, resultado.inputs.precioFinalManual);
+      }
+    });
+  }
+  if (manualInput) {
+    manualInput.addEventListener('change', () => {
+      actualizarPrecioFinalEnResultado('manual', parseMilesValue(manualInput.value));
+    });
+  }
+
+  wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Vista previa (numeración provisoria, sin consumir el contador real) hasta que se guarde.
+function getNextQuoteNumberPreview() {
+  const year = new Date().getFullYear();
+  let counterData = {};
+  try {
+    counterData = JSON.parse(localStorage.getItem(STORAGE_KEYS.COUNTER)) || {};
+  } catch (e) {
+    counterData = {};
+  }
+  const current = (counterData[year] || 0) + 1;
+  return `COT-${year}-${String(current).padStart(3, '0')} (provisorio)`;
+}
+
+function guardarCotizacionEnHistorial(resultado, numeroPreview) {
+  const historial = getHistory();
+  const { inputs, desglose } = resultado;
+  const esMS = esMysteryShopper(inputs);
+
+  let numero;
+  let existing = null;
+  if (APP_STATE.editingQuoteId) {
+    existing = historial.find((q) => q.id === APP_STATE.editingQuoteId);
+  }
+
+  if (existing) {
+    numero = existing.numero;
+  } else {
+    numero = getNextQuoteNumber();
+  }
+
+  const alcance = esMS
+    ? `${inputs.msAseguradorasCount || 0} emp. · ${inputs.msSucursalesPresencial || 0} suc.`
+    : `${inputs.pdvCount} PDV`;
+
+  const record = {
+    id: existing ? existing.id : cryptoId(),
+    numero,
+    cliente: inputs.clientName,
+    fecha: inputs.quoteDate,
+    servicio: inputs.serviceType,
+    pdv: alcance,
+    zona: esMS ? 'asuncion' : inputs.zone,
+    total: desglose.total,
+    estado: existing ? existing.estado : 'Borrador',
+    resultado, // se guarda el objeto completo para poder ver/editar/duplicar/generar PDF luego
+  };
+
+  if (existing) {
+    const idx = historial.findIndex((q) => q.id === existing.id);
+    historial[idx] = record;
+  } else {
+    historial.push(record);
+  }
+
+  saveHistory(historial);
+  APP_STATE.editingQuoteId = record.id;
+  alert(`Cotización ${numero} guardada correctamente en el historial.`);
+}
+
+/* ==========================================================================
+   5B. UI - CALCULO RAPIDO
+   --------------------------------------------------------------------------
+   Vista simplificada para estimar un precio en el momento (ej. durante una
+   reunión con el cliente), sin completar todo el formulario de cotización.
+   ========================================================================== */
+
+function initCalculoRapido() {
+  document.getElementById('btnCalcularRapido').addEventListener('click', procesarCalculoRapido);
+
+  document.getElementById('rapidoServiceType').addEventListener('change', (e) => {
+    const esMS = e.target.value === 'mysteryShopper';
+    document.getElementById('rapidoFieldsetAuditoria').style.display = esMS ? 'none' : '';
+    document.getElementById('rapidoFieldsetMysteryShopper').style.display = esMS ? '' : 'none';
+  });
+
+  document.getElementById('rapidoZone').addEventListener('change', (e) => {
+    const showDept = e.target.value === 'interior' || e.target.value === 'granAsuncion';
+    const showSplit = e.target.value === 'combinada';
+    document.getElementById('rapidoDepartmentWrapper').style.display = showDept ? 'block' : 'none';
+    document.getElementById('rapidoZoneSplitWrapper').style.display = showSplit ? 'block' : 'none';
+  });
+
+  document.getElementById('btnLimpiarRapido').addEventListener('click', () => {
+    document.getElementById('formRapido').reset();
+    document.getElementById('rapidoDepartmentWrapper').style.display = 'none';
+    document.getElementById('rapidoZoneSplitWrapper').style.display = 'none';
+    document.getElementById('rapidoFieldsetAuditoria').style.display = '';
+    document.getElementById('rapidoFieldsetMysteryShopper').style.display = 'none';
+    document.getElementById('resultadoRapidoWrapper').innerHTML = '';
+  });
+}
+
+function construirInputsCalculoRapido() {
+  const serviceType = document.getElementById('rapidoServiceType').value;
+  const clientName = document.getElementById('rapidoCliente').value.trim() || 'Cliente (cálculo rápido)';
+  const base = {
+    clientName,
+    contactName: '',
+    quoteDate: new Date().toISOString().slice(0, 10),
+    projectName: '',
+    validity: '',
+    notes: '',
+    serviceType,
+    discountPercent: 0,
+    extraCostManual: 0,
+    extraCostReason: '',
+    requiresTraslado: false,
+    requiresAlojamiento: false,
+    requiresViaticos: false,
+    requiresFotografia: false,
+    requiresInforme: false,
+    requiresDashboard: false,
+    requiresPresentacion: false,
+    requiresTrabajoNocturno: false,
+    requiresFinDeSemana: false,
+  };
+
+  if (serviceType === 'mysteryShopper') {
+    return {
+      ...base,
+      msAseguradorasCount: document.getElementById('rapidoMsAseguradorasCount').value,
+      msSucursalesPresencial: document.getElementById('rapidoMsSucursalesPresencial').value,
+      msProductosPorVisita: document.getElementById('rapidoMsProductosPorVisita').value || 0,
+      msCanalesRemotos: document.getElementById('rapidoMsCanalesRemotos').value,
+      msRondas: document.getElementById('rapidoMsRondas').value || 1,
+      msPlazoDeseadoDias: document.getElementById('rapidoMsPlazoDeseadoDias').value || 1,
     };
   }
 
-  /* ========================================================================
-     NUMERACIÓN AUTOMÁTICA DE COTIZACIONES (COT-AAAA-000)
-     ======================================================================== */
-
-  function getContador() {
-    return Store.get(STORAGE_KEYS.CONTADOR, { anio: new Date().getFullYear(), ultimo: 0 });
-  }
-
-  function peekNextQuoteNumber() {
-    const anioActual = new Date().getFullYear();
-    const contador = getContador();
-    const ultimo = contador.anio === anioActual ? contador.ultimo : 0;
-    return `COT-${anioActual}-${String(ultimo + 1).padStart(3, "0")}`;
-  }
-
-  function consumeNextQuoteNumber() {
-    const anioActual = new Date().getFullYear();
-    let contador = getContador();
-    if (contador.anio !== anioActual) contador = { anio: anioActual, ultimo: 0 };
-    contador.ultimo += 1;
-    Store.set(STORAGE_KEYS.CONTADOR, contador);
-    return `COT-${anioActual}-${String(contador.ultimo).padStart(3, "0")}`;
-  }
-
-  function refreshQuoteNumberPreview() {
-    document.getElementById("quote-number-preview").textContent = peekNextQuoteNumber();
-  }
-
-  /* ========================================================================
-     4. FORMULARIO "NUEVA COTIZACIÓN"
-     ======================================================================== */
-
-  const Form = {
-    els: {},
-    ultimoResultado: null, // { datos, calculo, numero }
-    numeroReservado: null, // número asignado a la cotización actualmente calculada (aún no guardada)
-
-    init() {
-      const ids = [
-        "clienteNombre", "clienteContacto", "fechaCotizacion", "vigenciaDias",
-        "nombreProyecto", "observaciones", "tipoServicio", "cantidadPDV",
-        "productosPorPDV", "visitasPorPDV", "frecuencia", "duracionMeses",
-        "zona", "departamento", "cantidadAuditores", "reqTraslado",
-        "reqAlojamiento", "reqViaticos", "reqEvidencia", "reqInforme",
-        "reqDashboard", "descuentoPct", "costoAdicionalManual", "motivoCostoAdicional",
-      ];
-      ids.forEach((id) => (this.els[id] = document.getElementById(id)));
-
-      this.els.fechaCotizacion.value = todayISO();
-
-      this.els.tipoServicio.innerHTML = SERVICE_TYPES.map((t) => `<option value="${t.value}">${escapeHtml(t.label)}</option>`).join("");
-      this.els.tipoServicio.addEventListener("change", () => {
-        this.updateDescuentoHint();
-        this.updatePuntosEvaluacionUI();
-        this.toggleModoAuditores();
-      });
-      this.updatePuntosEvaluacionUI();
-
-      document.getElementById("zona").addEventListener("change", () => this.toggleDeptoField());
-      document.getElementById("frecuencia").addEventListener("change", () => this.toggleDuracionField());
-      document.querySelectorAll('input[name="modoAuditores"]').forEach((r) =>
-        r.addEventListener("change", () => this.toggleModoAuditores())
-      );
-
-      document.getElementById("descuentoPct").addEventListener("input", () => this.updateDescuentoHint());
-      this.updateDescuentoHint();
-      this.toggleDeptoField();
-      this.toggleDuracionField();
-      this.toggleModoAuditores();
-
-      document.getElementById("btnCalcular").addEventListener("click", () => this.calcular());
-      document.getElementById("btnLimpiarForm").addEventListener("click", () => this.confirmarLimpiar());
-      document.getElementById("btnDuplicarActual").addEventListener("click", () => this.duplicarActual());
-
-      refreshQuoteNumberPreview();
-    },
-
-    toggleDeptoField() {
-      const zona = this.els.zona.value;
-      document.getElementById("deptoWrap").style.display = zona === "interior" ? "block" : "none";
-    },
-
-    toggleDuracionField() {
-      const esUnica = this.els.frecuencia.value === "unica";
-      const wrap = document.getElementById("duracionWrap");
-      wrap.style.opacity = esUnica ? "0.45" : "1";
-      this.els.duracionMeses.disabled = esUnica;
-      if (esUnica) this.els.duracionMeses.value = 1;
-    },
-
-    toggleModoAuditores() {
-      const modo = document.querySelector('input[name="modoAuditores"]:checked').value;
-      this.els.cantidadAuditores.disabled = modo === "automatico";
-      if (modo === "automatico") {
-        const cfg = getConfig(this.els.tipoServicio.value);
-        const pdv = Number(this.els.cantidadPDV.value) || 0;
-        this.els.cantidadAuditores.value = pdv > 0 ? calcularCantidadAuditores(cfg, pdv) : "";
-        this.els.cantidadAuditores.placeholder = "Se calcula automáticamente";
-      }
-    },
-
-    updateDescuentoHint() {
-      const cfg = getConfig(this.els.tipoServicio.value);
-      document.getElementById("descuentoHint").textContent =
-        `Máximo permitido según configuración: ${cfg.descuentoMaximoPct}%`;
-    },
-
-    // Alterna entre el campo numérico manual de "productos por PDV" y el
-    // checklist de puntos de evaluación, según lo configurado para el tipo
-    // de servicio seleccionado (ver "Puntos de evaluación a medir" en
-    // Configuración de costos).
-    updatePuntosEvaluacionUI(puntosSeleccionadosPrevios) {
-      const cfg = getConfig(this.els.tipoServicio.value);
-      const puntos = cfg.puntosEvaluacion || [];
-      const numericoWrap = document.getElementById("productosNumericoWrap");
-      const checklistWrap = document.getElementById("puntosEvaluacionWrap");
-      const checklistBox = document.getElementById("puntosEvaluacionChecklist");
-
-      if (puntos.length > 0) {
-        numericoWrap.style.display = "none";
-        this.els.productosPorPDV.required = false;
-        checklistWrap.style.display = "block";
-
-        const seleccionadosIds = (puntosSeleccionadosPrevios || []).map((p) => p.id);
-        checklistBox.innerHTML = puntos
-          .map(
-            (p) => `
-            <label class="check">
-              <input type="checkbox" class="punto-evaluacion-check" data-id="${p.id}" data-nombre="${escapeHtml(p.nombre)}"
-                ${seleccionadosIds.includes(p.id) ? "checked" : ""}>
-              ${escapeHtml(p.nombre)}
-            </label>`
-          )
-          .join("");
-      } else {
-        numericoWrap.style.display = "block";
-        this.els.productosPorPDV.required = true;
-        checklistWrap.style.display = "none";
-        checklistBox.innerHTML = "";
-      }
-    },
-
-    leerDatos() {
-      const modoAuditores = document.querySelector('input[name="modoAuditores"]:checked').value;
-      const cfg = getConfig(this.els.tipoServicio.value);
-      const usaChecklist = (cfg.puntosEvaluacion || []).length > 0;
-
-      let productosPorPDV;
-      let puntosSeleccionados = null;
-      if (usaChecklist) {
-        puntosSeleccionados = Array.from(document.querySelectorAll(".punto-evaluacion-check:checked")).map((el) => ({
-          id: el.dataset.id,
-          nombre: el.dataset.nombre,
-        }));
-        productosPorPDV = puntosSeleccionados.length;
-      } else {
-        productosPorPDV = Number(this.els.productosPorPDV.value) || 0;
-      }
-
-      return {
-        clienteNombre: this.els.clienteNombre.value.trim(),
-        clienteContacto: this.els.clienteContacto.value.trim(),
-        fechaCotizacion: this.els.fechaCotizacion.value,
-        vigenciaDias: Number(this.els.vigenciaDias.value) || 0,
-        nombreProyecto: this.els.nombreProyecto.value.trim(),
-        observaciones: this.els.observaciones.value.trim(),
-        tipoServicio: this.els.tipoServicio.value,
-        tipoServicioLabel: this.els.tipoServicio.options[this.els.tipoServicio.selectedIndex].text,
-        cantidadPDV: Number(this.els.cantidadPDV.value) || 0,
-        productosPorPDV,
-        puntosSeleccionados, // null si el tipo de servicio usa el campo numérico manual
-        visitasPorPDV: Number(this.els.visitasPorPDV.value) || 1,
-        frecuencia: this.els.frecuencia.value,
-        duracionMeses: Number(this.els.duracionMeses.value) || 1,
-        zona: this.els.zona.value,
-        departamento: this.els.departamento.value.trim(),
-        modoAuditores,
-        cantidadAuditores: Number(this.els.cantidadAuditores.value) || 0,
-        requiereTraslado: this.els.reqTraslado.checked,
-        requiereAlojamiento: this.els.reqAlojamiento.checked,
-        requiereViaticos: this.els.reqViaticos.checked,
-        requiereEvidencia: this.els.reqEvidencia.checked,
-        requiereInforme: this.els.reqInforme.checked,
-        requiereDashboard: this.els.reqDashboard.checked,
-        descuentoPct: Number(this.els.descuentoPct.value) || 0,
-        costoAdicionalManual: Number(this.els.costoAdicionalManual.value) || 0,
-        motivoCostoAdicional: this.els.motivoCostoAdicional.value.trim(),
-      };
-    },
-
-    validar(datos) {
-      const errores = [];
-      if (!datos.clienteNombre) errores.push("Ingresá el nombre del cliente o empresa.");
-      if (!datos.fechaCotizacion) errores.push("Seleccioná la fecha de cotización.");
-      if (!datos.vigenciaDias || datos.vigenciaDias <= 0) errores.push("La vigencia debe ser mayor a cero.");
-      if (!datos.cantidadPDV || datos.cantidadPDV <= 0) errores.push("La cantidad de PDV debe ser mayor que cero.");
-      if (datos.puntosSeleccionados !== null) {
-        if (!datos.puntosSeleccionados.length) errores.push("Seleccioná al menos un punto a evaluar.");
-      } else if (!datos.productosPorPDV || datos.productosPorPDV <= 0) {
-        errores.push("La cantidad de productos por PDV debe ser válida.");
-      }
-      if (datos.zona === "interior" && !datos.departamento) errores.push("Indicá el departamento o ciudad del Interior.");
-      if (datos.modoAuditores === "manual" && (!datos.cantidadAuditores || datos.cantidadAuditores <= 0)) {
-        errores.push("Indicá la cantidad de auditores (modo manual).");
-      }
-      if (datos.descuentoPct < 0) errores.push("El descuento no puede ser negativo.");
-      const cfgTipo = getConfig(datos.tipoServicio);
-      if (datos.descuentoPct > cfgTipo.descuentoMaximoPct) {
-        errores.push(`El descuento no puede superar el máximo permitido (${cfgTipo.descuentoMaximoPct}%).`);
-      }
-      if (datos.costoAdicionalManual > 0 && !datos.motivoCostoAdicional) {
-        errores.push("Indicá el motivo del costo adicional manual.");
-      }
-      return errores;
-    },
-
-    calcular() {
-      const datos = this.leerDatos();
-      const errores = this.validar(datos);
-      const errBox = document.getElementById("formError");
-
-      if (errores.length) {
-        errBox.textContent = errores[0] + (errores.length > 1 ? ` (y ${errores.length - 1} más)` : "");
-        showToast(errores[0], "error");
-        document.getElementById("resultBox").hidden = true;
-        return;
-      }
-      errBox.textContent = "";
-
-      const calculo = calcularCotizacion(datos, getConfig(datos.tipoServicio));
-      this.numeroReservado = this.numeroReservado || peekNextQuoteNumber();
-      this.ultimoResultado = { datos, calculo, numero: this.numeroReservado };
-
-      Resultado.render(this.ultimoResultado);
-      document.getElementById("resultBox").hidden = false;
-      document.getElementById("resultBox").scrollIntoView({ behavior: "smooth", block: "start" });
-    },
-
-    confirmarLimpiar() {
-      Modal.confirm(
-        "¿Seguro que querés limpiar el formulario? Se perderán los datos no guardados.",
-        () => this.limpiar(),
-        { title: "Limpiar formulario", confirmLabel: "Limpiar", danger: true }
-      );
-    },
-
-    limpiar() {
-      document.getElementById("quoteForm").reset();
-      this.els.fechaCotizacion.value = todayISO();
-      this.updatePuntosEvaluacionUI();
-      this.toggleDeptoField();
-      this.toggleDuracionField();
-      this.toggleModoAuditores();
-      this.updateDescuentoHint();
-      document.getElementById("formError").textContent = "";
-      document.getElementById("resultBox").hidden = true;
-      this.ultimoResultado = null;
-      this.numeroReservado = null;
-      refreshQuoteNumberPreview();
-      showToast("Formulario limpiado.");
-    },
-
-    cargarDatos(datos) {
-      this.els.clienteNombre.value = datos.clienteNombre || "";
-      this.els.clienteContacto.value = datos.clienteContacto || "";
-      this.els.fechaCotizacion.value = datos.fechaCotizacion || todayISO();
-      this.els.vigenciaDias.value = datos.vigenciaDias || 15;
-      this.els.nombreProyecto.value = datos.nombreProyecto || "";
-      this.els.observaciones.value = datos.observaciones || "";
-      this.els.tipoServicio.value = datos.tipoServicio || "auditoria_pdv";
-      this.els.cantidadPDV.value = datos.cantidadPDV || "";
-      this.els.productosPorPDV.value = datos.productosPorPDV || "";
-      this.els.visitasPorPDV.value = datos.visitasPorPDV || 1;
-      this.els.frecuencia.value = datos.frecuencia || "unica";
-      this.els.duracionMeses.value = datos.duracionMeses || 1;
-      this.els.zona.value = datos.zona || "asuncion";
-      this.els.departamento.value = datos.departamento || "";
-      document.querySelector(`input[name="modoAuditores"][value="${datos.modoAuditores || "automatico"}"]`).checked = true;
-      this.els.cantidadAuditores.value = datos.cantidadAuditores || "";
-      this.els.reqTraslado.checked = !!datos.requiereTraslado;
-      this.els.reqAlojamiento.checked = !!datos.requiereAlojamiento;
-      this.els.reqViaticos.checked = !!datos.requiereViaticos;
-      this.els.reqEvidencia.checked = !!datos.requiereEvidencia;
-      this.els.reqInforme.checked = !!datos.requiereInforme;
-      this.els.reqDashboard.checked = !!datos.requiereDashboard;
-      this.els.descuentoPct.value = datos.descuentoPct || 0;
-      this.els.costoAdicionalManual.value = datos.costoAdicionalManual || 0;
-      this.els.motivoCostoAdicional.value = datos.motivoCostoAdicional || "";
-      this.updatePuntosEvaluacionUI(datos.puntosSeleccionados);
-      this.updateDescuentoHint();
-      this.toggleDeptoField();
-      this.toggleDuracionField();
-      this.toggleModoAuditores();
-    },
-
-    duplicarActual() {
-      if (!this.ultimoResultado) {
-        showToast("Primero calculá una cotización para poder duplicarla.", "error");
-        return;
-      }
-      this.numeroReservado = null;
-      refreshQuoteNumberPreview();
-      this.calcular();
-      showToast("Se generó una copia con un nuevo número de cotización.");
-    },
+  return {
+    ...base,
+    pdvCount: document.getElementById('rapidoPdvCount').value,
+    productsPerPdv: document.getElementById('rapidoProductsPerPdv').value || 0,
+    visitsPerPdv: document.getElementById('rapidoVisitsPerPdv').value || 1,
+    frequency: document.getElementById('rapidoFrequency').value,
+    durationMonths: document.getElementById('rapidoDurationMonths').value || 1,
+    plazoDeseadoDiasCiclo: document.getElementById('rapidoPlazoDeseadoDiasCiclo').value || 5,
+    zone: document.getElementById('rapidoZone').value,
+    department: document.getElementById('rapidoDepartment').value,
+    pdvAsuncion: document.getElementById('rapidoPdvAsuncion').value,
+    pdvGranAsuncion: document.getElementById('rapidoPdvGranAsuncion').value,
+    pdvInterior: document.getElementById('rapidoPdvInterior').value,
+    auditorsMode: 'auto',
+    auditorsCount: '',
   };
+}
 
-  /* ========================================================================
-     5. RESULTADO DE LA COTIZACIÓN
-     ======================================================================== */
+function procesarCalculoRapido() {
+  const inputs = construirInputsCalculoRapido();
+  const esMS = esMysteryShopper(inputs);
 
-  const ZONA_LABEL = { asuncion: "Asunción", gran_asuncion: "Gran Asunción", interior: "Interior" };
-  const FRECUENCIA_LABEL = { unica: "Única vez", semanal: "Semanal", quincenal: "Quincenal", mensual: "Mensual" };
-
-  function listaServiciosAdicionales(datos) {
-    const items = [];
-    if (datos.requiereTraslado) items.push("Traslado");
-    if (datos.requiereAlojamiento) items.push("Alojamiento");
-    if (datos.requiereViaticos) items.push("Viáticos");
-    if (datos.requiereEvidencia) items.push("Evidencia fotográfica");
-    if (datos.requiereInforme) items.push("Informe final");
-    if (datos.requiereDashboard) items.push("Dashboard y presentación de resultados");
-    return items.length ? items.join(", ") : "Ninguno";
-  }
-
-  // Devuelve las filas de resumen para "productos por PDV" o, si el tipo de
-  // servicio usa checklist de puntos de evaluación (ej. Mystery Shopper),
-  // las filas equivalentes con el detalle de los puntos marcados.
-  function filasProductosOPuntos(datos, calculo) {
-    if (datos.puntosSeleccionados && datos.puntosSeleccionados.length) {
-      const nombres = datos.puntosSeleccionados.map((p) => escapeHtml(p.nombre)).join(", ");
-      return [
-        ["Puntos evaluados por visita", `${datos.puntosSeleccionados.length} — ${nombres}`],
-        ["Total aprox. de evaluaciones", calculo.totalProductosAuditar.toLocaleString("es-PY")],
-      ];
-    }
-    return [
-      ["Productos por PDV", datos.productosPorPDV],
-      ["Total aprox. de productos a auditar", calculo.totalProductosAuditar.toLocaleString("es-PY")],
-    ];
-  }
-
-  const Resultado = {
-    render(resultado) {
-      const { datos, calculo, numero } = resultado;
-
-      document.getElementById("totalValue").textContent = formatGs(calculo.total);
-      document.getElementById("resultQuoteCode").textContent = numero;
-      document.getElementById("statPromedioPDV").textContent = formatGs(calculo.costoPromedioPDV);
-      document.getElementById("statPromedioVisita").textContent = formatGs(calculo.costoPromedioVisita);
-
-      document.getElementById("personalizadaWarning").hidden = !calculo.personalizada;
-
-      // Tabla resumen (para cliente y para uso interno)
-      const summaryRows = [
-        ["Cliente", escapeHtml(datos.clienteNombre)],
-        ["Proyecto", escapeHtml(datos.nombreProyecto || "-")],
-        ["Servicio", escapeHtml(datos.tipoServicioLabel)],
-        ["Cantidad de PDV", datos.cantidadPDV],
-        ...filasProductosOPuntos(datos, calculo),
-        ["Zona", ZONA_LABEL[datos.zona] + (datos.departamento ? ` (${escapeHtml(datos.departamento)})` : "")],
-        ["Visitas por PDV, por ronda", datos.visitasPorPDV],
-        ["Frecuencia", FRECUENCIA_LABEL[datos.frecuencia]],
-        ["Duración", datos.frecuencia === "unica" ? "Única vez" : `${datos.duracionMeses} mes(es)`],
-        ["Cantidad de auditores", calculo.cantidadAuditores],
-        ["Servicios adicionales", listaServiciosAdicionales(datos)],
-        ["Fecha de cotización", formatDateDisplay(datos.fechaCotizacion)],
-        ["Vigencia", `${datos.vigenciaDias} día(s)`],
-      ];
-      document.getElementById("summaryTable").innerHTML = summaryRows
-        .map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`)
-        .join("");
-
-      // Tabla de desglose interno
-      const breakdownRows = [
-        ["Precio base por escala (por ronda)", formatGs(calculo.precioBase)],
-        ["Rondas totales del proyecto", calculo.totalRondas],
-        ["Costo base total", formatGs(calculo.costoBaseTotal)],
-        ["Recargo por productos adicionales", formatGs(calculo.recargoProductos)],
-        ["Recargo por visitas adicionales", formatGs(calculo.recargoVisitas)],
-        [`Recargo de zona (${calculo.recargoZonaPct}%)`, formatGs(calculo.recargoZona)],
-        ["Traslado", formatGs(calculo.costoTraslado)],
-        ["Viáticos", formatGs(calculo.costoViaticos)],
-        ["Alojamiento", formatGs(calculo.costoAlojamiento)],
-        ["Evidencia fotográfica", formatGs(calculo.costoEvidencia)],
-        ["Informe final", formatGs(calculo.costoInforme)],
-        ["Dashboard", formatGs(calculo.costoDashboard)],
-        ["Presentación de resultados", formatGs(calculo.costoPresentacion)],
-        ["Costo adicional manual", formatGs(calculo.costoAdicionalManual)],
-        ["Subtotal costos operativos", formatGs(calculo.subtotalCostos)],
-        [`Margen comercial (${calculo.margenPct}%)`, formatGs(calculo.margenComercial)],
-        ["Subtotal con margen", formatGs(calculo.subtotalConMargen)],
-        [`Descuento (${calculo.descuentoPct}%)`, "- " + formatGs(calculo.montoDescuento)],
-        [`IVA (${calculo.ivaPct}%)`, formatGs(calculo.montoIva)],
-      ];
-      let breakdownHtml = breakdownRows
-        .map(([label, value]) => `<tr${value.toString().startsWith("-") ? ' class="subtract"' : ""}><td>${label}</td><td>${value}</td></tr>`)
-        .join("");
-      breakdownHtml += `<tr class="total-row"><td>TOTAL ESTIMADO</td><td>${formatGs(calculo.total)}</td></tr>`;
-      document.getElementById("breakdownTable").innerHTML = breakdownHtml;
-    },
-
-    buildDocHtml(resultado, modo) {
-      // modo: "cliente" (sin margen ni fórmulas) | "interno" (desglose completo)
-      const { datos, calculo, numero } = resultado;
-      const filasCliente = [
-        ["Servicio", escapeHtml(datos.tipoServicioLabel)],
-        ["Cantidad de puntos de venta", datos.cantidadPDV],
-        ...(datos.puntosSeleccionados && datos.puntosSeleccionados.length
-          ? [["Puntos evaluados por visita", datos.puntosSeleccionados.map((p) => escapeHtml(p.nombre)).join(", ")]]
-          : [["Productos por PDV", datos.productosPorPDV]]),
-        ["Zona", ZONA_LABEL[datos.zona] + (datos.departamento ? ` (${escapeHtml(datos.departamento)})` : "")],
-        ["Frecuencia", FRECUENCIA_LABEL[datos.frecuencia]],
-        ["Duración", datos.frecuencia === "unica" ? "Única vez" : `${datos.duracionMeses} mes(es)`],
-        ["Visitas por PDV, por ronda", datos.visitasPorPDV],
-        ["Servicios adicionales", listaServiciosAdicionales(datos)],
-      ];
-
-      let tablaHtml = filasCliente.map(([l, v]) => `<tr><td>${l}</td><td>${v}</td></tr>`).join("");
-      let totalesHtml = `
-        <tr><td>Subtotal</td><td>${formatGs(calculo.subtotalConMargen)}</td></tr>
-        <tr><td>Descuento (${calculo.descuentoPct}%)</td><td>- ${formatGs(calculo.montoDescuento)}</td></tr>
-        <tr><td>IVA (${calculo.ivaPct}%)</td><td>${formatGs(calculo.montoIva)}</td></tr>`;
-
-      if (modo === "interno") {
-        tablaHtml += `<tr><td colspan="2"><strong>— Desglose interno —</strong></td></tr>`;
-        tablaHtml += [
-          ["Precio base (por ronda)", formatGs(calculo.precioBase)],
-          ["Rondas totales", calculo.totalRondas],
-          ["Costo base total", formatGs(calculo.costoBaseTotal)],
-          ["Recargo productos adicionales", formatGs(calculo.recargoProductos)],
-          ["Recargo visitas adicionales", formatGs(calculo.recargoVisitas)],
-          [`Recargo de zona (${calculo.recargoZonaPct}%)`, formatGs(calculo.recargoZona)],
-          ["Traslado", formatGs(calculo.costoTraslado)],
-          ["Viáticos", formatGs(calculo.costoViaticos)],
-          ["Alojamiento", formatGs(calculo.costoAlojamiento)],
-          ["Evidencia fotográfica", formatGs(calculo.costoEvidencia)],
-          ["Informe final", formatGs(calculo.costoInforme)],
-          ["Dashboard", formatGs(calculo.costoDashboard)],
-          ["Presentación de resultados", formatGs(calculo.costoPresentacion)],
-          ["Costo adicional manual", formatGs(calculo.costoAdicionalManual)],
-          [`Margen comercial (${calculo.margenPct}%)`, formatGs(calculo.margenComercial)],
-        ]
-          .map(([l, v]) => `<tr><td>${l}</td><td>${v}</td></tr>`)
-          .join("");
-      }
-
-      const advertenciaPersonalizada = calculo.personalizada
-        ? `<p style="color:#8A5A11;"><strong>Nota:</strong> esta cantidad de PDV supera las escalas estándar configuradas. El monto es un estimado orientativo sujeto a revisión comercial.</p>`
-        : "";
-
-      return `
-        <div class="doc-preview">
-          <div class="doc-header">
-            <div>
-              <h2>Cotización de servicios de auditoría</h2>
-              <div>${escapeHtml(datos.clienteNombre)}${datos.clienteContacto ? " — " + escapeHtml(datos.clienteContacto) : ""}</div>
-              ${datos.nombreProyecto ? `<div>Proyecto: ${escapeHtml(datos.nombreProyecto)}</div>` : ""}
-            </div>
-            <div style="text-align:right;">
-              <div class="doc-code">${numero}</div>
-              <div>Fecha: ${formatDateDisplay(datos.fechaCotizacion)}</div>
-              <div>Vigencia: ${datos.vigenciaDias} día(s)</div>
-            </div>
-          </div>
-          <table>${tablaHtml}${totalesHtml}</table>
-          <p class="doc-total">TOTAL ESTIMADO: ${formatGs(calculo.total)}</p>
-          ${advertenciaPersonalizada}
-          ${datos.observaciones ? `<p><strong>Observaciones:</strong> ${escapeHtml(datos.observaciones)}</p>` : ""}
-          <p style="font-size:0.78rem; color:var(--color-text-muted); margin-top:18px;">
-            Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el
-            alcance definitivo, ubicación de los puntos de venta y requerimientos adicionales del cliente.
-          </p>
-        </div>`;
-    },
-
-    generarPDF(resultado, modo) {
-      const { jsPDF } = window.jspdf || {};
-      if (!jsPDF) {
-        showToast("No se pudo cargar la librería de PDF. Verificá tu conexión a internet.", "error");
-        return;
-      }
-      const { datos, calculo, numero } = resultado;
-      const doc = new jsPDF({ unit: "pt", format: "a4" });
-      const margin = 48;
-      let y = margin;
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text("Cotización de servicios de auditoría PDV", margin, y);
-      y += 22;
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`N° ${numero}`, margin, y);
-      doc.text(`Fecha: ${formatDateDisplay(datos.fechaCotizacion)}`, 300, y);
-      y += 16;
-      doc.text(`Cliente: ${datos.clienteNombre}`, margin, y);
-      y += 14;
-      if (datos.clienteContacto) {
-        doc.text(`Contacto: ${datos.clienteContacto}`, margin, y);
-        y += 14;
-      }
-      if (datos.nombreProyecto) {
-        doc.text(`Proyecto: ${datos.nombreProyecto}`, margin, y);
-        y += 14;
-      }
-      doc.text(`Vigencia: ${datos.vigenciaDias} día(s)`, margin, y);
-      y += 22;
-
-      const drawRow = (label, value, bold) => {
-        doc.setFont("helvetica", bold ? "bold" : "normal");
-        doc.text(String(label), margin, y);
-        doc.text(String(value), 400, y, { align: "left" });
-        y += 15;
-        if (y > 760) {
-          doc.addPage();
-          y = margin;
-        }
-      };
-
-      doc.setFont("helvetica", "bold");
-      doc.text("Detalle del servicio", margin, y);
-      y += 16;
-      drawRow("Servicio", datos.tipoServicioLabel);
-      drawRow("Cantidad de PDV", datos.cantidadPDV);
-      if (datos.puntosSeleccionados && datos.puntosSeleccionados.length) {
-        drawRow("Puntos evaluados por visita", datos.puntosSeleccionados.length);
-        doc.setFont("helvetica", "italic");
-        doc.setFontSize(8.5);
-        const puntosTexto = doc.splitTextToSize(datos.puntosSeleccionados.map((p) => p.nombre).join(" · "), 500);
-        doc.text(puntosTexto, margin, y);
-        y += puntosTexto.length * 11 + 4;
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-      } else {
-        drawRow("Productos por PDV", datos.productosPorPDV);
-      }
-      drawRow("Zona", ZONA_LABEL[datos.zona] + (datos.departamento ? ` (${datos.departamento})` : ""));
-      drawRow("Frecuencia", FRECUENCIA_LABEL[datos.frecuencia]);
-      drawRow("Duración", datos.frecuencia === "unica" ? "Única vez" : `${datos.duracionMeses} mes(es)`);
-      drawRow("Visitas por PDV, por ronda", datos.visitasPorPDV);
-      drawRow("Servicios adicionales", listaServiciosAdicionales(datos));
-      y += 8;
-
-      doc.setFont("helvetica", "bold");
-      doc.text(modo === "interno" ? "Desglose completo (uso interno)" : "Totales", margin, y);
-      y += 16;
-
-      if (modo === "interno") {
-        drawRow("Precio base (por ronda)", formatGs(calculo.precioBase));
-        drawRow("Rondas totales", calculo.totalRondas);
-        drawRow("Costo base total", formatGs(calculo.costoBaseTotal));
-        drawRow("Recargo productos adicionales", formatGs(calculo.recargoProductos));
-        drawRow("Recargo visitas adicionales", formatGs(calculo.recargoVisitas));
-        drawRow(`Recargo de zona (${calculo.recargoZonaPct}%)`, formatGs(calculo.recargoZona));
-        drawRow("Traslado", formatGs(calculo.costoTraslado));
-        drawRow("Viáticos", formatGs(calculo.costoViaticos));
-        drawRow("Alojamiento", formatGs(calculo.costoAlojamiento));
-        drawRow("Evidencia fotográfica", formatGs(calculo.costoEvidencia));
-        drawRow("Informe final", formatGs(calculo.costoInforme));
-        drawRow("Dashboard", formatGs(calculo.costoDashboard));
-        drawRow("Presentación de resultados", formatGs(calculo.costoPresentacion));
-        drawRow("Costo adicional manual", formatGs(calculo.costoAdicionalManual));
-        drawRow("Subtotal costos operativos", formatGs(calculo.subtotalCostos));
-        drawRow(`Margen comercial (${calculo.margenPct}%)`, formatGs(calculo.margenComercial));
-        drawRow("Subtotal con margen", formatGs(calculo.subtotalConMargen));
-      } else {
-        drawRow("Subtotal", formatGs(calculo.subtotalConMargen));
-      }
-      drawRow(`Descuento (${calculo.descuentoPct}%)`, "- " + formatGs(calculo.montoDescuento));
-      drawRow(`IVA (${calculo.ivaPct}%)`, formatGs(calculo.montoIva));
-      y += 6;
-      drawRow("TOTAL ESTIMADO", formatGs(calculo.total), true);
-
-      if (calculo.personalizada) {
-        y += 10;
-        doc.setFont("helvetica", "italic");
-        doc.setFontSize(9);
-        const lines = doc.splitTextToSize(
-          "Este servicio supera las escalas estándar configuradas. El monto es un estimado orientativo sujeto a revisión comercial.",
-          500
-        );
-        doc.text(lines, margin, y);
-        y += lines.length * 12;
-      }
-
-      y += 14;
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(8.5);
-      const nota = doc.splitTextToSize(
-        "Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo, ubicación de los puntos de venta y requerimientos adicionales del cliente.",
-        500
-      );
-      doc.text(nota, margin, y);
-
-      const sufijo = modo === "interno" ? "interno" : "cliente";
-      doc.save(`${numero}_${sufijo}.pdf`);
-    },
-  };
-
-  document.addEventListener("click", (e) => {
-    if (e.target && e.target.id === "btnPreview") {
-      if (!Form.ultimoResultado) return;
-      Modal.open(Resultado.buildDocHtml(Form.ultimoResultado, "interno"));
-    }
-    if (e.target && e.target.id === "btnImprimir") {
-      if (!Form.ultimoResultado) return;
-      const w = window.open("", "_blank");
-      w.document.write(`<html><head><title>${Form.ultimoResultado.numero}</title>
-        <link rel="stylesheet" href="styles.css"></head><body style="padding:30px;">
-        ${Resultado.buildDocHtml(Form.ultimoResultado, "interno")}</body></html>`);
-      w.document.close();
-      setTimeout(() => w.print(), 400);
-    }
-    if (e.target && e.target.id === "btnPdfCliente") {
-      if (!Form.ultimoResultado) return;
-      Resultado.generarPDF(Form.ultimoResultado, "cliente");
-    }
-    if (e.target && e.target.id === "btnPdfInterno") {
-      if (!Form.ultimoResultado) return;
-      Resultado.generarPDF(Form.ultimoResultado, "interno");
-    }
-    if (e.target && e.target.id === "btnGuardar") {
-      if (!Form.ultimoResultado) return;
-      Historial.guardarDesdeResultado(Form.ultimoResultado);
-    }
-  });
-
-  /* ========================================================================
-     6. HISTORIAL DE COTIZACIONES
-     ======================================================================== */
-
-  const Historial = {
-    listar() {
-      return Store.get(STORAGE_KEYS.HISTORIAL, []);
-    },
-
-    guardarRegistro(registro) {
-      const lista = this.listar();
-      const idx = lista.findIndex((r) => r.numero === registro.numero);
-      if (idx >= 0) lista[idx] = registro;
-      else lista.unshift(registro);
-      Store.set(STORAGE_KEYS.HISTORIAL, lista);
-    },
-
-    eliminar(numero) {
-      const lista = this.listar().filter((r) => r.numero !== numero);
-      Store.set(STORAGE_KEYS.HISTORIAL, lista);
-    },
-
-    buscarPorNumero(numero) {
-      return this.listar().find((r) => r.numero === numero);
-    },
-
-    guardarDesdeResultado(resultado) {
-      const { datos, calculo, numero } = resultado;
-      const yaExiste = this.buscarPorNumero(numero);
-      const registro = {
-        numero,
-        cliente: datos.clienteNombre,
-        fecha: datos.fechaCotizacion,
-        servicio: datos.tipoServicioLabel,
-        cantidadPDV: datos.cantidadPDV,
-        zona: datos.zona,
-        total: calculo.total,
-        estado: yaExiste ? yaExiste.estado : "Borrador",
-        datos,
-        calculo,
-      };
-
-      if (!yaExiste) {
-        consumeNextQuoteNumber();
-      }
-      this.guardarRegistro(registro);
-      Form.numeroReservado = null;
-      refreshQuoteNumberPreview();
-      showToast(`Cotización ${numero} guardada en el historial.`, "success");
-      renderHistorialTable();
-    },
-
-    duplicar(numero) {
-      const reg = this.buscarPorNumero(numero);
-      if (!reg) return;
-      Nav.goTo("nueva");
-      Form.cargarDatos(reg.datos);
-      Form.numeroReservado = null;
-      refreshQuoteNumberPreview();
-      Form.calcular();
-      showToast("Cotización duplicada. Revisá los datos y guardala para confirmar.");
-    },
-
-    editar(numero) {
-      const reg = this.buscarPorNumero(numero);
-      if (!reg) return;
-      Nav.goTo("nueva");
-      Form.cargarDatos(reg.datos);
-      Form.numeroReservado = reg.numero;
-      document.getElementById("quote-number-preview").textContent = reg.numero;
-      Form.calcular();
-      showToast(`Editando ${numero}. Al guardar se actualizará este mismo registro.`);
-    },
-
-    ver(numero) {
-      const reg = this.buscarPorNumero(numero);
-      if (!reg) return;
-      Modal.open(Resultado.buildDocHtml({ datos: reg.datos, calculo: reg.calculo, numero: reg.numero }, "interno"));
-    },
-
-    descargarPDF(numero) {
-      const reg = this.buscarPorNumero(numero);
-      if (!reg) return;
-      Resultado.generarPDF({ datos: reg.datos, calculo: reg.calculo, numero: reg.numero }, "interno");
-    },
-
-    confirmarEliminar(numero) {
-      Modal.confirm(
-        `¿Seguro que querés eliminar la cotización ${numero}? Esta acción no se puede deshacer.`,
-        () => {
-          this.eliminar(numero);
-          renderHistorialTable();
-          showToast(`Cotización ${numero} eliminada.`);
-        },
-        { title: "Eliminar cotización", confirmLabel: "Eliminar", danger: true }
-      );
-    },
-
-    cambiarEstado(numero, nuevoEstado) {
-      const lista = this.listar();
-      const reg = lista.find((r) => r.numero === numero);
-      if (reg) {
-        reg.estado = nuevoEstado;
-        Store.set(STORAGE_KEYS.HISTORIAL, lista);
-        renderHistorialTable();
-      }
-    },
-  };
-
-  function renderHistorialTable() {
-    const busqueda = (document.getElementById("fBuscar").value || "").toLowerCase().trim();
-    const zonaFiltro = document.getElementById("fZona").value;
-    const estadoFiltro = document.getElementById("fEstado").value;
-    const desde = document.getElementById("fDesde").value;
-    const hasta = document.getElementById("fHasta").value;
-
-    let lista = Historial.listar();
-
-    if (busqueda) {
-      lista = lista.filter(
-        (r) => r.cliente.toLowerCase().includes(busqueda) || r.numero.toLowerCase().includes(busqueda)
-      );
-    }
-    if (zonaFiltro) lista = lista.filter((r) => r.zona === zonaFiltro);
-    if (estadoFiltro) lista = lista.filter((r) => r.estado === estadoFiltro);
-    if (desde) lista = lista.filter((r) => r.fecha >= desde);
-    if (hasta) lista = lista.filter((r) => r.fecha <= hasta);
-
-    const tbody = document.getElementById("historialBody");
-    const empty = document.getElementById("historialEmpty");
-
-    if (!lista.length) {
-      tbody.innerHTML = "";
-      empty.hidden = false;
+  if (esMS) {
+    const aseguradoras = Number(inputs.msAseguradorasCount) || 0;
+    const sucursales = Number(inputs.msSucursalesPresencial) || 0;
+    if (aseguradoras === 0 && sucursales === 0) {
+      alert('Ingrese al menos una empresa a monitorear o una sucursal a visitar.');
       return;
     }
-    empty.hidden = true;
-
-    const estados = ["Borrador", "Enviada", "Aprobada", "Rechazada", "Vencida"];
-
-    tbody.innerHTML = lista
-      .map((r) => {
-        const estadoOptions = estados
-          .map((e) => `<option value="${e}" ${e === r.estado ? "selected" : ""}>${e}</option>`)
-          .join("");
-        return `
-        <tr>
-          <td>${escapeHtml(r.numero)}</td>
-          <td>${escapeHtml(r.cliente)}</td>
-          <td>${formatDateDisplay(r.fecha)}</td>
-          <td>${escapeHtml(r.servicio)}</td>
-          <td>${r.cantidadPDV}</td>
-          <td>${ZONA_LABEL[r.zona] || r.zona}</td>
-          <td>${formatGs(r.total)}</td>
-          <td>
-            <select class="status-select" data-numero="${escapeHtml(r.numero)}">${estadoOptions}</select>
-          </td>
-          <td>
-            <div class="row-actions">
-              <button class="btn btn-ghost btn-icon" data-action="ver" data-numero="${escapeHtml(r.numero)}" title="Ver">👁</button>
-              <button class="btn btn-ghost btn-icon" data-action="editar" data-numero="${escapeHtml(r.numero)}" title="Editar">✎</button>
-              <button class="btn btn-ghost btn-icon" data-action="duplicar" data-numero="${escapeHtml(r.numero)}" title="Duplicar">⧉</button>
-              <button class="btn btn-ghost btn-icon" data-action="pdf" data-numero="${escapeHtml(r.numero)}" title="Descargar PDF">⬇</button>
-              <button class="btn btn-danger-outline btn-icon" data-action="eliminar" data-numero="${escapeHtml(r.numero)}" title="Eliminar">🗑</button>
-            </div>
-          </td>
-        </tr>`;
-      })
-      .join("");
+  } else {
+    const pdvCount = Number(inputs.pdvCount);
+    if (!pdvCount || pdvCount <= 0) {
+      alert('Ingrese una cantidad de PDV válida para calcular.');
+      return;
+    }
+    if (inputs.zone === 'combinada') {
+      const suma = (Number(inputs.pdvAsuncion) || 0) + (Number(inputs.pdvGranAsuncion) || 0) + (Number(inputs.pdvInterior) || 0);
+      if (suma !== pdvCount) {
+        alert(`La suma de PDV por zona (${suma}) debe ser igual a la cantidad total de PDV (${pdvCount}).`);
+        return;
+      }
+    }
   }
 
-  document.addEventListener("change", (e) => {
-    if (e.target.classList.contains("status-select")) {
-      Historial.cambiarEstado(e.target.dataset.numero, e.target.value);
+  const config = getConfig();
+  const resultado = calcularCotizacion(inputs, config);
+  renderResultadoRapido(resultado, config, inputs);
+}
+
+function renderResultadoRapido(resultado, config, inputs) {
+  const { desglose, isCustom } = resultado;
+  const wrapper = document.getElementById('resultadoRapidoWrapper');
+  const esMS = esMysteryShopper(inputs);
+
+  const subtitulo = esMS
+    ? `${inputs.msAseguradorasCount || 0} empresas · ${inputs.msSucursalesPresencial || 0} sucursales`
+    : `${inputs.pdvCount} PDV · ${ZONA_LABELS[inputs.zone] || inputs.zone}${inputs.department ? ' - ' + inputs.department : ''}`;
+
+  const horasCampo = esMS ? desglose.horasHombreCampo : desglose.horasHombreTotales;
+  const dotacion = esMS ? desglose.shoppersNecesarios : desglose.relevadoresRecomendados;
+  const etiquetaDotacion = esMS ? 'Mystery shoppers recomendados' : 'Relevadores recomendados';
+
+  wrapper.innerHTML = `
+    <div class="card result-card">
+      ${isCustom ? `<div class="alert alert-warning">La cantidad de PDV supera la escala máxima configurada. Este valor es <strong>estimado y está sujeto a revisión</strong>.</div>` : ''}
+      <div class="result-header">
+        <div>
+          <h2>Estimación rápida — ${SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType}</h2>
+          <p class="muted">${subtitulo}</p>
+        </div>
+        <div class="total-badge">
+          <span class="total-label">Precio recomendado</span>
+          <span class="total-value">${formatearMoneda(desglose.rangoComercial.recomendado, config.moneda)}</span>
+        </div>
+      </div>
+
+      <div class="result-grid">
+        <div class="stat-card"><span class="stat-label">Horas estimadas de campo</span><span class="stat-value">${horasCampo.toLocaleString('es-PY', { maximumFractionDigits: 1 })} horas</span></div>
+        <div class="stat-card"><span class="stat-label">${etiquetaDotacion}</span><span class="stat-value">${dotacion} persona(s)</span></div>
+        <div class="stat-card"><span class="stat-label">Costo interno estimado</span><span class="stat-value">${formatearMoneda(desglose.costoInternoTotal, config.moneda)}</span></div>
+      </div>
+
+      <div class="result-block">
+        <h3>Rango comercial</h3>
+        <div class="result-grid">
+          <div class="stat-card"><span class="stat-label">Precio mínimo (margen ${desglose.margenMinimoPercent}%)</span><span class="stat-value">${formatearMoneda(desglose.rangoComercial.minimo, config.moneda)}</span></div>
+          <div class="stat-card stat-card-margin"><span class="stat-label">Precio recomendado (margen ${desglose.margenPercent}%)</span><span class="stat-value">${formatearMoneda(desglose.rangoComercial.recomendado, config.moneda)}</span></div>
+          <div class="stat-card"><span class="stat-label">Precio máximo (margen ${desglose.margenMaximoPercent}%)</span><span class="stat-value">${formatearMoneda(desglose.rangoComercial.maximo, config.moneda)}</span></div>
+        </div>
+      </div>
+
+      <div class="alert alert-info">
+        Cálculo orientativo para uso durante reuniones comerciales. Para generar el documento oficial, complete el formulario de "Nueva cotización".
+      </div>
+
+      <div class="button-row">
+        <button class="btn btn-primary" id="btnUsarEnCotizacionCompleta">Usar estos datos en cotización completa</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btnUsarEnCotizacionCompleta').addEventListener('click', () => {
+    precargarFormularioDesdeInputs(inputs);
+    cambiarVista('nueva');
+  });
+}
+
+/**
+ * Vuelca un objeto de "inputs" (como el que arma el formulario de cotización)
+ * dentro del formulario de "Nueva cotización", para continuar el trabajo
+ * comenzado en el cálculo rápido.
+ */
+function precargarFormularioDesdeInputs(inputs) {
+  const f = document.getElementById('formCotizacion');
+  Object.keys(inputs).forEach((key) => {
+    if (!f[key]) return;
+    if (f[key].type === 'checkbox') {
+      f[key].checked = !!inputs[key];
+    } else {
+      f[key].value = inputs[key];
+    }
+  });
+  if (inputs.clientName === 'Cliente (cálculo rápido)') {
+    f.clientName.value = '';
+  }
+  actualizarCamposPorTipoServicio(inputs.serviceType === 'mysteryShopper' ? 'mysteryShopper' : 'auditoria');
+  f.serviceType.value = inputs.serviceType === 'mysteryShopper' ? 'mysteryShopper' : 'auditoria';
+  attachMilesFormatting(document.getElementById('extraCostManual'));
+  document.getElementById('departmentWrapper').style.display =
+    (inputs.zone === 'interior' || inputs.zone === 'granAsuncion') ? 'block' : 'none';
+  document.getElementById('zoneSplitWrapper').style.display =
+    inputs.zone === 'combinada' ? 'block' : 'none';
+  document.getElementById('auditorsCountWrapper').style.display =
+    inputs.auditorsMode === 'manual' ? 'block' : 'none';
+}
+
+/* ==========================================================================
+   6. UI - CONFIGURACION
+   ========================================================================== */
+
+function initConfiguracion() {
+  document.getElementById('btnAgregarEscala').addEventListener('click', () => {
+    const config = getConfig();
+    config.scales.push({ id: cryptoId(), min: 0, max: 0, precioMinimo: 0, precioRecomendado: 0, precioMaximo: 0, productsIncluidos: 50 });
+    saveConfig(config);
+    renderConfiguracion();
+  });
+
+  document.getElementById('btnAgregarPerfil').addEventListener('click', () => {
+    const config = getConfig();
+    config.officeProfiles.push({
+      id: cryptoId(), nombre: 'Nuevo perfil', costoPorHora: 0,
+      aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0,
+    });
+    saveConfig(config);
+    renderConfiguracion();
+  });
+
+  document.getElementById('btnAgregarTarea').addEventListener('click', () => {
+    const config = getConfig();
+    const primerPerfil = config.officeProfiles[0];
+    config.officeTasks.push({
+      id: cryptoId(), tipo: 'personalizada', nombre: 'Nueva tarea',
+      perfilId: primerPerfil ? primerPerfil.id : '',
+      horasBase: 0, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 0,
+      revisionesIncluidas: 0, aplicaA: 'ambos', condicionA: null, activa: true,
+    });
+    saveConfig(config);
+    renderConfiguracion();
+  });
+
+  CAMPOS_MONEDA_CONFIG.forEach((campo) => attachMilesFormatting(document.getElementById(campo)));
+
+  document.getElementById('formConfigGeneral').addEventListener('submit', (e) => {
+    e.preventDefault();
+    guardarConfigGeneral();
+  });
+
+  document.getElementById('btnRestaurarConfig').addEventListener('click', () => {
+    if (confirm('¿Restaurar todos los valores de ejemplo? Se perderán los cambios de configuración actuales.')) {
+      saveConfig(getDefaultConfig());
+      renderConfiguracion();
+      alert('Configuración restaurada a los valores de ejemplo.');
     }
   });
 
-  document.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-action]");
-    if (!btn) return;
-    const numero = btn.dataset.numero;
-    const accion = btn.dataset.action;
-    if (accion === "ver") Historial.ver(numero);
-    if (accion === "editar") Historial.editar(numero);
-    if (accion === "duplicar") Historial.duplicar(numero);
-    if (accion === "pdf") Historial.descargarPDF(numero);
-    if (accion === "eliminar") Historial.confirmarEliminar(numero);
-  });
+  document.getElementById('btnExportarConfig').addEventListener('click', exportarConfiguracion);
 
-  // Nota: los listeners de los filtros de historial se registran en init(),
-  // una vez que el DOM está completamente disponible.
+  document.getElementById('inputImportarConfig').addEventListener('change', importarConfiguracion);
+}
 
-  /* ========================================================================
-     CONFIGURACIÓN — UI
-     ======================================================================== */
+function renderConfiguracion() {
+  const config = getConfig();
+  renderTablaEscalas(config);
+  rellenarFormularioConfigGeneral(config);
+  renderTablaPerfiles(config);
+  renderTablaTareas(config);
+}
 
-  const ConfigUI = {
-    els: {},
-    tipoActual: SERVICE_TYPES[0].value,
+/**
+ * Renderiza la tabla de perfiles de oficina (Coordinador, Analista, etc.),
+ * cada uno con su propio costo por hora, cargas sociales y "costo hora
+ * cargado" recalculado en vivo mientras se edita.
+ */
+function renderTablaPerfiles(config) {
+  const tbody = document.getElementById('tablaPerfilesBody');
+  const perfiles = config.officeProfiles || [];
 
-    init() {
-      const ids = [
-        "modalidadPrecio", "cfgProductosIncluidos", "cfgRecargoProducto", "cfgPdvPorAuditor",
-        "cfgCostoVisitaAdicional", "cfgRecargoGranAsuncion", "cfgRecargoInterior", "cfgCostoTraslado",
-        "cfgViaticoDia", "cfgAlojamientoNoche", "cfgEvidenciaFotografica", "cfgInformeFinal",
-        "cfgDashboard", "cfgPresentacion", "cfgMargen", "cfgIva", "cfgDescuentoMax",
-      ];
-      ids.forEach((id) => (this.els[id] = document.getElementById(id)));
+  tbody.innerHTML = perfiles.map((p) => {
+    const costoCargado = calcularCostoHoraCargado(p.costoPorHora, {
+      aguinaldoPercent: p.aguinaldoPercent,
+      ipsPatronalPercent: p.ipsPatronalPercent,
+      otrosCostosLaboralesPercent: p.otrosCostosLaboralesPercent,
+    }, {});
+    return `
+    <tr data-id="${p.id}">
+      <td><input type="text" class="input-sm perfil-nombre" value="${p.nombre}"></td>
+      <td><input type="text" class="input-sm perfil-costo" value="${formatMilesDisplay(p.costoPorHora)}" inputmode="numeric"></td>
+      <td><input type="number" class="input-sm perfil-aguinaldo" value="${p.aguinaldoPercent}" min="0" step="0.01"></td>
+      <td><input type="number" class="input-sm perfil-ips" value="${p.ipsPatronalPercent}" min="0" step="0.5"></td>
+      <td><input type="number" class="input-sm perfil-otros" value="${p.otrosCostosLaboralesPercent}" min="0" step="0.5"></td>
+      <td class="muted">${formatearMoneda(costoCargado, config.moneda)}</td>
+      <td class="col-actions">
+        <button class="btn btn-tiny btn-secondary btn-guardar-perfil">Guardar</button>
+        <button class="btn btn-tiny btn-danger btn-eliminar-perfil">Eliminar</button>
+      </td>
+    </tr>
+  `;
+  }).join('') || '<tr><td colspan="7" class="muted">No hay perfiles configurados. Agregue uno para empezar.</td></tr>';
 
-      const tipoSelect = document.getElementById("configTipoServicio");
-      tipoSelect.innerHTML = SERVICE_TYPES.map((t) => `<option value="${t.value}">${escapeHtml(t.label)}</option>`).join("");
-      tipoSelect.addEventListener("change", () => {
-        this.tipoActual = tipoSelect.value;
-        this.cargarEnFormulario();
-      });
+  tbody.querySelectorAll('.perfil-costo').forEach(attachMilesFormatting);
 
-      document.getElementById("btnAgregarEscala").addEventListener("click", () => this.agregarEscala());
-      document.getElementById("btnAgregarPunto").addEventListener("click", () => this.agregarPunto());
-      document.getElementById("btnGuardarConfig").addEventListener("click", () => this.guardar());
-      document.getElementById("btnRestaurarConfig").addEventListener("click", () => this.confirmarRestaurar());
-      document.getElementById("btnExportConfig").addEventListener("click", () => this.exportar());
-      document.getElementById("inputImportConfig").addEventListener("change", (e) => this.importar(e));
-
-      this.cargarEnFormulario();
-    },
-
-    configActual() {
-      return getConfig(this.tipoActual);
-    },
-
-    cargarEnFormulario() {
-      const c = this.configActual();
-      document.getElementById("escalasTituloTipo").innerHTML =
-        `Escalas de precio por cantidad de PDV — ${escapeHtml(getServiceTypeLabel(this.tipoActual))} <span class="tag-example">VALORES DE EJEMPLO</span>`;
-      document.getElementById("puntosTituloTipo").innerHTML =
-        `Puntos de evaluación a medir — ${escapeHtml(getServiceTypeLabel(this.tipoActual))} <span class="tag-example">VALORES DE EJEMPLO</span>`;
-      this.els.modalidadPrecio.value = c.modalidadPrecio;
-      this.els.cfgProductosIncluidos.value = c.productosIncluidos;
-      this.els.cfgRecargoProducto.value = c.recargoProductoAdicional;
-      this.els.cfgPdvPorAuditor.value = c.pdvPorAuditor;
-      this.els.cfgCostoVisitaAdicional.value = c.costoVisitaAdicional;
-      this.els.cfgRecargoGranAsuncion.value = c.recargoGranAsuncionPct;
-      this.els.cfgRecargoInterior.value = c.recargoInteriorPct;
-      this.els.cfgCostoTraslado.value = c.costoTrasladoPorAuditorRonda;
-      this.els.cfgViaticoDia.value = c.viaticoAuditorDia;
-      this.els.cfgAlojamientoNoche.value = c.alojamientoAuditorNoche;
-      this.els.cfgEvidenciaFotografica.value = c.evidenciaFotograficaPorPDV;
-      this.els.cfgInformeFinal.value = c.informeFinal;
-      this.els.cfgDashboard.value = c.dashboard;
-      this.els.cfgPresentacion.value = c.presentacionResultados;
-      this.els.cfgMargen.value = c.margenComercialPct;
-      this.els.cfgIva.value = c.ivaPct;
-      this.els.cfgDescuentoMax.value = c.descuentoMaximoPct;
-      this.renderEscalas();
-      this.renderPuntos();
-    },
-
-    renderPuntos() {
-      const cfg = this.configActual();
-      const puntos = cfg.puntosEvaluacion || [];
-      const tbody = document.getElementById("puntosBody");
-      const empty = document.getElementById("puntosEmpty");
-
-      if (!puntos.length) {
-        tbody.innerHTML = "";
-        empty.hidden = false;
-        return;
-      }
-      empty.hidden = true;
-
-      tbody.innerHTML = puntos
-        .map(
-          (p) => `
-        <tr data-id="${p.id}">
-          <td><input type="text" class="punto-nombre" value="${escapeHtml(p.nombre)}"></td>
-          <td>
-            <div class="row-actions">
-              <button class="btn btn-ghost btn-icon" data-punto-action="guardar" data-id="${p.id}" title="Guardar cambios">💾</button>
-              <button class="btn btn-danger-outline btn-icon" data-punto-action="eliminar" data-id="${p.id}" title="Eliminar punto">🗑</button>
-            </div>
-          </td>
-        </tr>`
-        )
-        .join("");
-    },
-
-    agregarPunto() {
-      const cfg = this.configActual();
-      if (!Array.isArray(cfg.puntosEvaluacion)) cfg.puntosEvaluacion = [];
-      cfg.puntosEvaluacion.push({ id: uid("p"), nombre: "Nuevo punto a evaluar" });
-      saveConfigs(CONFIGS);
-      this.renderPuntos();
-      showToast("Punto agregado. Editá el nombre y guardalo.");
-    },
-
-    guardarPuntoFila(id) {
-      const fila = document.querySelector(`#puntosBody tr[data-id="${id}"]`);
-      if (!fila) return;
-      const nombre = fila.querySelector(".punto-nombre").value.trim();
-      if (!nombre) {
-        showToast("El nombre del punto no puede estar vacío.", "error");
-        return;
-      }
-      const cfg = this.configActual();
-      const punto = cfg.puntosEvaluacion.find((p) => p.id === id);
-      if (punto) {
-        punto.nombre = nombre;
-        saveConfigs(CONFIGS);
-        showToast("Punto actualizado.", "success");
-      }
-    },
-
-    eliminarPunto(id) {
-      Modal.confirm(
-        "¿Eliminar este punto de evaluación? Esta acción no se puede deshacer.",
-        () => {
-          const cfg = this.configActual();
-          cfg.puntosEvaluacion = cfg.puntosEvaluacion.filter((p) => p.id !== id);
-          saveConfigs(CONFIGS);
-          this.renderPuntos();
-          showToast("Punto eliminado. Si esta era la última fila, el formulario volverá a usar el campo numérico manual.");
-        },
-        { title: "Eliminar punto de evaluación", confirmLabel: "Eliminar", danger: true }
-      );
-    },
-
-    renderEscalas() {
-      const cfg = this.configActual();
-      const escalas = getEscalasOrdenadas(cfg);
-      const tbody = document.getElementById("escalasBody");
-      tbody.innerHTML = escalas
-        .map(
-          (e) => `
-        <tr data-id="${e.id}">
-          <td><input type="number" min="1" class="escala-min" value="${e.min}" style="width:90px;"></td>
-          <td><input type="number" min="1" class="escala-max" value="${e.max}" style="width:90px;"></td>
-          <td><input type="number" min="0" class="escala-precio" value="${e.precioBase}" style="width:160px;"></td>
-          <td>
-            <div class="row-actions">
-              <button class="btn btn-ghost btn-icon" data-escala-action="guardar" data-id="${e.id}" title="Guardar cambios">💾</button>
-              <button class="btn btn-danger-outline btn-icon" data-escala-action="eliminar" data-id="${e.id}" title="Eliminar escala">🗑</button>
-            </div>
-          </td>
-        </tr>`
-        )
-        .join("");
-
-      const problemas = validarEscalas(cfg);
-      const warningEl = document.getElementById("escalasWarning");
-      if (problemas.length) {
-        warningEl.textContent = "⚠ " + problemas.join(" ");
-        warningEl.style.color = "var(--color-danger)";
-      } else {
-        warningEl.textContent = "Las escalas no presentan superposiciones ni huecos.";
-        warningEl.style.color = "var(--color-text-muted)";
-      }
-    },
-
-    agregarEscala() {
-      const cfg = this.configActual();
-      const escalas = getEscalasOrdenadas(cfg);
-      const ultima = escalas[escalas.length - 1];
-      const nuevoMin = ultima ? ultima.max + 1 : 1;
-      cfg.escalas.push({
-        id: uid("e"),
-        min: nuevoMin,
-        max: nuevoMin + 9,
-        precioBase: ultima ? ultima.precioBase + 1000000 : 10000000,
-      });
-      saveConfigs(CONFIGS);
-      this.renderEscalas();
-      showToast("Escala agregada. Ajustá los valores y guardá los cambios.");
-    },
-
-    guardarEscalaFila(id) {
-      const fila = document.querySelector(`#escalasBody tr[data-id="${id}"]`);
-      if (!fila) return;
-      const min = Number(fila.querySelector(".escala-min").value);
-      const max = Number(fila.querySelector(".escala-max").value);
-      const precio = Number(fila.querySelector(".escala-precio").value);
-
-      if (min <= 0 || max <= 0 || precio < 0) {
-        showToast("Los valores de la escala deben ser positivos.", "error");
-        return;
-      }
-      if (min > max) {
-        showToast("El PDV mínimo no puede ser mayor al máximo.", "error");
-        return;
-      }
-      const cfg = this.configActual();
-      const escala = cfg.escalas.find((e) => e.id === id);
-      if (escala) {
-        escala.min = min;
-        escala.max = max;
-        escala.precioBase = precio;
-        saveConfigs(CONFIGS);
-        this.renderEscalas();
-        showToast("Escala actualizada.", "success");
-      }
-    },
-
-    eliminarEscala(id) {
-      Modal.confirm(
-        "¿Eliminar esta escala de precio? Esta acción no se puede deshacer.",
-        () => {
-          const cfg = this.configActual();
-          cfg.escalas = cfg.escalas.filter((e) => e.id !== id);
-          saveConfigs(CONFIGS);
-          this.renderEscalas();
-          showToast("Escala eliminada.");
-        },
-        { title: "Eliminar escala", confirmLabel: "Eliminar", danger: true }
-      );
-    },
-
-    leerFormularioGeneral() {
-      return {
-        modalidadPrecio: this.els.modalidadPrecio.value,
-        productosIncluidos: Number(this.els.cfgProductosIncluidos.value) || 0,
-        recargoProductoAdicional: Number(this.els.cfgRecargoProducto.value) || 0,
-        pdvPorAuditor: Math.max(1, Number(this.els.cfgPdvPorAuditor.value) || 1),
-        costoVisitaAdicional: Number(this.els.cfgCostoVisitaAdicional.value) || 0,
-        recargoGranAsuncionPct: Number(this.els.cfgRecargoGranAsuncion.value) || 0,
-        recargoInteriorPct: Number(this.els.cfgRecargoInterior.value) || 0,
-        costoTrasladoPorAuditorRonda: Number(this.els.cfgCostoTraslado.value) || 0,
-        viaticoAuditorDia: Number(this.els.cfgViaticoDia.value) || 0,
-        alojamientoAuditorNoche: Number(this.els.cfgAlojamientoNoche.value) || 0,
-        evidenciaFotograficaPorPDV: Number(this.els.cfgEvidenciaFotografica.value) || 0,
-        informeFinal: Number(this.els.cfgInformeFinal.value) || 0,
-        dashboard: Number(this.els.cfgDashboard.value) || 0,
-        presentacionResultados: Number(this.els.cfgPresentacion.value) || 0,
-        margenComercialPct: Number(this.els.cfgMargen.value) || 0,
-        ivaPct: Number(this.els.cfgIva.value) || 0,
-        descuentoMaximoPct: Number(this.els.cfgDescuentoMax.value) || 0,
-      };
-    },
-
-    validarGeneral(vals) {
-      const errores = [];
-      Object.entries(vals).forEach(([key, val]) => {
-        if (typeof val === "number" && val < 0) errores.push(`El valor de "${key}" no puede ser negativo.`);
-      });
-      return errores;
-    },
-
-    guardar() {
-      const vals = this.leerFormularioGeneral();
-      const errores = this.validarGeneral(vals);
-      const msgEl = document.getElementById("configSavedMsg");
-      const cfg = this.configActual();
-
-      const problemasEscalas = validarEscalas(cfg);
-      if (problemasEscalas.length) {
-        errores.push("Revisá las escalas: " + problemasEscalas[0]);
-      }
-
-      if (errores.length) {
-        msgEl.textContent = errores[0];
-        msgEl.style.color = "var(--color-danger)";
-        showToast(errores[0], "error");
-        return;
-      }
-
-      CONFIGS[this.tipoActual] = Object.assign(cfg, vals);
-      saveConfigs(CONFIGS);
-      Form.updateDescuentoHint();
-      msgEl.style.color = "var(--color-primary)";
-      msgEl.textContent = `Configuración de "${getServiceTypeLabel(this.tipoActual)}" guardada correctamente.`;
-      showToast(`Configuración de "${getServiceTypeLabel(this.tipoActual)}" guardada.`, "success");
-      setTimeout(() => (msgEl.textContent = ""), 3500);
-    },
-
-    confirmarRestaurar() {
-      Modal.confirm(
-        `¿Restaurar los valores de ejemplo de "${getServiceTypeLabel(this.tipoActual)}"? Se perderán las tarifas configuradas actualmente para este tipo de servicio (los demás tipos no se ven afectados).`,
-        () => {
-          CONFIGS[this.tipoActual] = getDefaultConfigForTipo(this.tipoActual);
-          saveConfigs(CONFIGS);
-          this.cargarEnFormulario();
-          Form.updateDescuentoHint();
-          showToast(`Se restauraron los valores de ejemplo de "${getServiceTypeLabel(this.tipoActual)}".`);
-        },
-        { title: "Restaurar valores de ejemplo", confirmLabel: "Restaurar", danger: true }
-      );
-    },
-
-    exportar() {
-      const blob = new Blob([JSON.stringify(CONFIGS, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `config-cotizador-pdv-${todayISO()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast("Configuración de todos los tipos de servicio exportada.");
-    },
-
-    importar(e) {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const data = JSON.parse(reader.result);
-          if (!data || typeof data !== "object") throw new Error("Formato inválido");
-
-          // Compatibilidad con exportaciones antiguas (un solo tipo de servicio,
-          // sin agrupar por tipo): si el JSON tiene "escalas" en la raíz, se
-          // interpreta como la configuración de "auditoria_pdv".
-          let importedByTipo = data;
-          if (Array.isArray(data.escalas)) {
-            importedByTipo = { auditoria_pdv: data };
-          }
-
-          const nuevas = {};
-          SERVICE_TYPES.forEach((t) => {
-            const def = getDefaultConfigForTipo(t.value);
-            const importedForType = importedByTipo[t.value];
-            nuevas[t.value] = importedForType
-              ? Object.assign({}, def, importedForType, {
-                  escalas: importedForType.escalas && importedForType.escalas.length ? importedForType.escalas : def.escalas,
-                })
-              : getConfig(t.value);
-          });
-
-          CONFIGS = nuevas;
-          saveConfigs(CONFIGS);
-          this.cargarEnFormulario();
-          Form.updateDescuentoHint();
-          showToast("Configuración importada correctamente.", "success");
-        } catch (err) {
-          showToast("El archivo seleccionado no es una configuración válida.", "error");
-        } finally {
-          e.target.value = "";
-        }
-      };
-      reader.readAsText(file);
-    },
-  };
-
-  document.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-escala-action]");
-    if (!btn) return;
-    const id = btn.dataset.id;
-    if (btn.dataset.escalaAction === "guardar") ConfigUI.guardarEscalaFila(id);
-    if (btn.dataset.escalaAction === "eliminar") ConfigUI.eliminarEscala(id);
-  });
-
-  document.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-punto-action]");
-    if (!btn) return;
-    const id = btn.dataset.id;
-    if (btn.dataset.puntoAction === "guardar") ConfigUI.guardarPuntoFila(id);
-    if (btn.dataset.puntoAction === "eliminar") ConfigUI.eliminarPunto(id);
-  });
-
-  /* ========================================================================
-     7. NAVEGACIÓN, ARRANQUE DE LA APP
-     ======================================================================== */
-
-  const Nav = {
-    init() {
-      document.querySelectorAll(".nav-btn").forEach((btn) => {
-        btn.addEventListener("click", () => this.goTo(btn.dataset.view));
-      });
-      document.getElementById("mobileToggle").addEventListener("click", () => {
-        document.getElementById("sidebar").classList.toggle("is-open");
-      });
-    },
-    goTo(view) {
-      document.querySelectorAll(".view").forEach((v) => v.classList.remove("is-active"));
-      document.getElementById("view-" + view).classList.add("is-active");
-      document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("is-active", b.dataset.view === view));
-      document.getElementById("sidebar").classList.remove("is-open");
-      if (view === "historial") renderHistorialTable();
-      if (view === "nueva") {
-        const seleccionActual = Array.from(document.querySelectorAll(".punto-evaluacion-check:checked")).map((el) => ({
-          id: el.dataset.id,
-          nombre: el.dataset.nombre,
-        }));
-        Form.updatePuntosEvaluacionUI(seleccionActual);
-      }
-      window.scrollTo({ top: 0, behavior: "instant" });
-    },
-  };
-
-  function init() {
-    Modal.init();
-    Nav.init();
-    Form.init();
-    ConfigUI.init();
-    renderHistorialTable();
-
-    // Listeners de filtros del historial (se registran acá porque el DOM ya está listo)
-    ["fBuscar", "fZona", "fEstado", "fDesde", "fHasta"].forEach((id) => {
-      const el = document.getElementById(id);
-      el.addEventListener(id === "fBuscar" ? "input" : "change", renderHistorialTable);
+  tbody.querySelectorAll('.btn-guardar-perfil').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const row = e.target.closest('tr');
+      const id = row.getAttribute('data-id');
+      const cfg = getConfig();
+      const perfil = cfg.officeProfiles.find((p) => p.id === id);
+      perfil.nombre = row.querySelector('.perfil-nombre').value.trim() || 'Perfil sin nombre';
+      perfil.costoPorHora = parseMilesValue(row.querySelector('.perfil-costo').value);
+      perfil.aguinaldoPercent = Number(row.querySelector('.perfil-aguinaldo').value) || 0;
+      perfil.ipsPatronalPercent = Number(row.querySelector('.perfil-ips').value) || 0;
+      perfil.otrosCostosLaboralesPercent = Number(row.querySelector('.perfil-otros').value) || 0;
+      saveConfig(cfg);
+      renderConfiguracion();
     });
+  });
 
-    // Recalcular auditores automáticos si cambia la cantidad de PDV
-    document.getElementById("cantidadPDV").addEventListener("input", () => Form.toggleModoAuditores());
-  }
+  tbody.querySelectorAll('.btn-eliminar-perfil').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const row = e.target.closest('tr');
+      const id = row.getAttribute('data-id');
+      const cfg = getConfig();
+      const enUso = (cfg.officeTasks || []).some((t) => t.perfilId === id);
+      if (enUso && !confirm('Este perfil está asignado a una o más tareas internas. Si lo elimina, esas tareas quedarán sin perfil responsable (costo 0). ¿Eliminar de todos modos?')) {
+        return;
+      }
+      if (!enUso && !confirm('¿Eliminar este perfil?')) return;
+      cfg.officeProfiles = cfg.officeProfiles.filter((p) => p.id !== id);
+      saveConfig(cfg);
+      renderConfiguracion();
+    });
+  });
+}
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+/**
+ * Renderiza la tabla de tareas internas de oficina. El costo de cada tarea
+ * se calcula en el motor (calcularManoObraOficina); acá solo se editan sus
+ * parámetros (horas, perfil responsable, a qué servicio aplica, si está activa).
+ */
+function renderTablaTareas(config) {
+  const tbody = document.getElementById('tablaTareasBody');
+  const tareas = config.officeTasks || [];
+  const perfiles = config.officeProfiles || [];
+
+  const opcionesPerfil = (perfilIdSeleccionado) => perfiles.map((p) =>
+    `<option value="${p.id}" ${p.id === perfilIdSeleccionado ? 'selected' : ''}>${p.nombre}</option>`
+  ).join('') || '<option value="">(sin perfiles disponibles)</option>';
+
+  const opcionesAplica = (valorActual) => ['ambos', 'auditoria', 'mysteryShopper'].map((v) => {
+    const etiqueta = v === 'ambos' ? 'Ambos servicios' : (v === 'auditoria' ? 'Solo Auditoría' : 'Solo Mystery Shopper');
+    return `<option value="${v}" ${v === valorActual ? 'selected' : ''}>${etiqueta}</option>`;
+  }).join('');
+
+  tbody.innerHTML = tareas.map((t) => `
+    <tr data-id="${t.id}">
+      <td><input type="text" class="input-sm tarea-nombre" value="${t.nombre}" style="min-width:180px;"></td>
+      <td><select class="input-sm tarea-perfil">${opcionesPerfil(t.perfilId)}</select></td>
+      <td><input type="number" class="input-sm tarea-horas-base" value="${t.horasBase}" min="0" step="0.5"></td>
+      <td><input type="number" class="input-sm tarea-horas-pdv" value="${t.horasPorPdv}" min="0" step="0.01"></td>
+      <td><input type="number" class="input-sm tarea-horas-100" value="${t.horasPorCada100Productos}" min="0" step="0.1"></td>
+      <td><input type="number" class="input-sm tarea-horas-ciclo" value="${t.horasPorCiclo}" min="0" step="0.1"></td>
+      <td><input type="number" class="input-sm tarea-revisiones" value="${t.revisionesIncluidas}" min="0" step="1"></td>
+      <td><select class="input-sm tarea-aplica">${opcionesAplica(t.aplicaA)}</select></td>
+      <td style="text-align:center;"><input type="checkbox" class="tarea-activa" ${t.activa ? 'checked' : ''}></td>
+      <td class="col-actions">
+        <button class="btn btn-tiny btn-secondary btn-guardar-tarea">Guardar</button>
+        <button class="btn btn-tiny btn-danger btn-eliminar-tarea">Eliminar</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="10" class="muted">No hay tareas configuradas. Agregue una para empezar.</td></tr>';
+
+  tbody.querySelectorAll('.btn-guardar-tarea').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const row = e.target.closest('tr');
+      const id = row.getAttribute('data-id');
+      const cfg = getConfig();
+      const tarea = cfg.officeTasks.find((t) => t.id === id);
+      tarea.nombre = row.querySelector('.tarea-nombre').value.trim() || 'Tarea sin nombre';
+      tarea.perfilId = row.querySelector('.tarea-perfil').value;
+      tarea.horasBase = Number(row.querySelector('.tarea-horas-base').value) || 0;
+      tarea.horasPorPdv = Number(row.querySelector('.tarea-horas-pdv').value) || 0;
+      tarea.horasPorCada100Productos = Number(row.querySelector('.tarea-horas-100').value) || 0;
+      tarea.horasPorCiclo = Number(row.querySelector('.tarea-horas-ciclo').value) || 0;
+      tarea.revisionesIncluidas = Number(row.querySelector('.tarea-revisiones').value) || 0;
+      tarea.aplicaA = row.querySelector('.tarea-aplica').value;
+      tarea.activa = row.querySelector('.tarea-activa').checked;
+      saveConfig(cfg);
+      renderConfiguracion();
+    });
+  });
+
+  tbody.querySelectorAll('.btn-eliminar-tarea').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      if (!confirm('¿Eliminar esta tarea interna?')) return;
+      const row = e.target.closest('tr');
+      const id = row.getAttribute('data-id');
+      const cfg = getConfig();
+      cfg.officeTasks = cfg.officeTasks.filter((t) => t.id !== id);
+      saveConfig(cfg);
+      renderConfiguracion();
+    });
+  });
+}
+
+function renderTablaEscalas(config) {
+  const tbody = document.getElementById('tablaEscalasBody');
+  const scales = escalasOrdenadas(config.scales);
+  const { errores, advertencias } = validarEscalas(config.scales);
+
+  tbody.innerHTML = scales.map((s) => `
+    <tr data-id="${s.id}">
+      <td><input type="number" class="input-sm escala-min" value="${s.min}" min="1"></td>
+      <td><input type="number" class="input-sm escala-max" value="${s.max}" min="1"></td>
+      <td><input type="number" class="input-sm escala-products" value="${s.productsIncluidos !== undefined ? s.productsIncluidos : 50}" min="0"></td>
+      <td><input type="text" class="input-sm escala-precio-min" value="${formatMilesDisplay(s.precioMinimo)}" inputmode="numeric"></td>
+      <td><input type="text" class="input-sm escala-precio-rec" value="${formatMilesDisplay(s.precioRecomendado)}" inputmode="numeric"></td>
+      <td><input type="text" class="input-sm escala-precio-max" value="${formatMilesDisplay(s.precioMaximo)}" inputmode="numeric"></td>
+      <td class="col-actions">
+        <button class="btn btn-tiny btn-secondary btn-guardar-escala">Guardar</button>
+        <button class="btn btn-tiny btn-secondary btn-duplicar-escala">Duplicar</button>
+        <button class="btn btn-tiny btn-danger btn-eliminar-escala">Eliminar</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="7" class="muted">No hay escalas configuradas. Agregue una escala para comenzar.</td></tr>';
+
+  tbody.querySelectorAll('.escala-precio-min, .escala-precio-rec, .escala-precio-max').forEach(attachMilesFormatting);
+
+  tbody.querySelectorAll('.btn-guardar-escala').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const row = e.target.closest('tr');
+      const id = row.getAttribute('data-id');
+      const cfg = getConfig();
+      const scale = cfg.scales.find((s) => s.id === id);
+      scale.min = Number(row.querySelector('.escala-min').value);
+      scale.max = Number(row.querySelector('.escala-max').value);
+      scale.productsIncluidos = Number(row.querySelector('.escala-products').value) || 0;
+      scale.precioMinimo = parseMilesValue(row.querySelector('.escala-precio-min').value);
+      scale.precioRecomendado = parseMilesValue(row.querySelector('.escala-precio-rec').value);
+      scale.precioMaximo = parseMilesValue(row.querySelector('.escala-precio-max').value);
+      saveConfig(cfg);
+      renderConfiguracion();
+    });
+  });
+
+  tbody.querySelectorAll('.btn-duplicar-escala').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const row = e.target.closest('tr');
+      const id = row.getAttribute('data-id');
+      const cfg = getConfig();
+      const original = cfg.scales.find((s) => s.id === id);
+      const copia = { ...original, id: cryptoId(), min: original.max + 1, max: original.max + 10 };
+      cfg.scales.push(copia);
+      saveConfig(cfg);
+      renderConfiguracion();
+    });
+  });
+
+  tbody.querySelectorAll('.btn-eliminar-escala').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      if (!confirm('¿Eliminar esta escala de precios?')) return;
+      const row = e.target.closest('tr');
+      const id = row.getAttribute('data-id');
+      const cfg = getConfig();
+      cfg.scales = cfg.scales.filter((s) => s.id !== id);
+      saveConfig(cfg);
+      renderConfiguracion();
+    });
+  });
+
+  const alertBox = document.getElementById('escalasAlertBox');
+  if (errores.length || advertencias.length) {
+    alertBox.style.display = 'block';
+    alertBox.innerHTML =
+      (errores.length ? `<div class="alert alert-danger"><strong>Errores:</strong><ul>${errores.map((e) => `<li>${e}</li>`).join('')}</ul></div>` : '') +
+      (advertencias.length ? `<div class="alert alert-warning"><strong>Advertencias:</strong><ul>${advertencias.map((a) => `<li>${a}</li>`).join('')}</ul></div>` : '');
   } else {
-    init();
+    alertBox.style.display = 'none';
+    alertBox.innerHTML = '';
   }
-})();
+}
+
+function rellenarFormularioConfigGeneral(config) {
+  const f = document.getElementById('formConfigGeneral');
+  f.pricingMode.value = config.pricingMode;
+  f.modoCosteoInforme.value = config.modoCosteoInforme;
+  f.modoCosteoDashboard.value = config.modoCosteoDashboard;
+  f.modoCosteoPresentacion.value = config.modoCosteoPresentacion;
+  CAMPOS_MONEDA_CONFIG.forEach((campo) => {
+    f[campo].value = formatMilesDisplay(config[campo]);
+  });
+  f.surchargeGranAsuncionPercent.value = config.surchargeGranAsuncionPercent;
+  f.surchargeInteriorPercent.value = config.surchargeInteriorPercent;
+  f.pdvPerAuditor.value = config.pdvPerAuditor;
+  f.gastosAdministrativosPercent.value = config.gastosAdministrativosPercent;
+  f.contingenciaPercent.value = config.contingenciaPercent;
+  f.margenMinimoPercent.value = config.margenMinimoPercent;
+  f.margenRecomendadoPercent.value = config.margenRecomendadoPercent;
+  f.margenMaximoPercent.value = config.margenMaximoPercent;
+  f.complejidadMediaPercent.value = config.complejidadMediaPercent;
+  f.complejidadAltaPercent.value = config.complejidadAltaPercent;
+  f.capacitacionInicialHoras.value = config.capacitacionInicialHoras;
+  f.supervisionCampoHorasPorCiclo.value = config.supervisionCampoHorasPorCiclo;
+  f.aplicarRevisitasPercent.checked = !!config.aplicarRevisitasPercent;
+  f.revisitasPercent.value = config.revisitasPercent;
+  f.aplicarAusenciasPercent.checked = !!config.aplicarAusenciasPercent;
+  f.ausenciasPercent.value = config.ausenciasPercent;
+  f.correccionesRondasIncluidas.value = config.correccionesRondasIncluidas;
+  f.horasPorRondaCorreccionExtra.value = config.horasPorRondaCorreccionExtra;
+  f.reunionesIncluidas.value = config.reunionesIncluidas;
+  f.horasPorReunionExtra.value = config.horasPorReunionExtra;
+  f.aplicarGastoTelefonia.checked = !!config.aplicarGastoTelefonia;
+  f.aplicarCostoHerramientas.checked = !!config.aplicarCostoHerramientas;
+  f.aplicarOtrosGastosOperativos.checked = !!config.aplicarOtrosGastosOperativos;
+  f.recargoUrgenciaPercent.value = config.recargoUrgenciaPercent;
+  f.ivaPercent.value = config.ivaPercent;
+  f.descuentoMaximoPercent.value = config.descuentoMaximoPercent;
+  f.aguinaldoPercent.value = config.aguinaldoPercent;
+  f.ipsPatronalPercent.value = config.ipsPatronalPercent;
+  f.otrosCostosLaboralesPercent.value = config.otrosCostosLaboralesPercent;
+  f.recargoNocturnoPercent.value = config.recargoNocturnoPercent;
+  f.recargoFinDeSemanaPercent.value = config.recargoFinDeSemanaPercent;
+
+  // Tiempos de relevamiento — Auditoría en PDV (minutos y horas)
+  f.auditPrepMinutos.value = config.auditPrepMinutos;
+  f.auditMinutosPorProducto.value = config.auditMinutosPorProducto;
+  f.auditMinutosEvidenciaPorProducto.value = config.auditMinutosEvidenciaPorProducto;
+  f.auditMinutosCierreFormulario.value = config.auditMinutosCierreFormulario;
+  f.auditMinutosEsperaPromedio.value = config.auditMinutosEsperaPromedio;
+  f.auditMinutosTrasladoEntrePdv.value = config.auditMinutosTrasladoEntrePdv;
+  f.auditJornadaEfectivaHoras.value = config.auditJornadaEfectivaHoras;
+
+  // Tiempo del relevador — Mystery Shopper (minutos y horas)
+  f.msMinutosTraslado.value = config.msMinutosTraslado;
+  f.msMinutosEspera.value = config.msMinutosEspera;
+  f.msMinutosInteraccion.value = config.msMinutosInteraccion;
+  f.msMinutosPorProductoServicio.value = config.msMinutosPorProductoServicio;
+  f.msMinutosCargaEvidencia.value = config.msMinutosCargaEvidencia;
+  f.msMinutosInformeVisita.value = config.msMinutosInformeVisita;
+  f.msJornadaEfectivaHorasDia.value = config.msJornadaEfectivaHorasDia;
+  f.msMinutosGestionRemota.value = config.msMinutosGestionRemota;
+  f.msHorasDisenoGuion.value = config.msHorasDisenoGuion;
+  f.msHorasAnalisisInforme.value = config.msHorasAnalisisInforme;
+}
+
+function guardarConfigGeneral() {
+  const f = document.getElementById('formConfigGeneral');
+  const config = getConfig();
+
+  const nuevaConfig = {
+    ...config,
+    pricingMode: f.pricingMode.value,
+    modoCosteoInforme: f.modoCosteoInforme.value,
+    modoCosteoDashboard: f.modoCosteoDashboard.value,
+    modoCosteoPresentacion: f.modoCosteoPresentacion.value,
+    surchargeGranAsuncionPercent: Number(f.surchargeGranAsuncionPercent.value),
+    surchargeInteriorPercent: Number(f.surchargeInteriorPercent.value),
+    pdvPerAuditor: Number(f.pdvPerAuditor.value),
+    gastosAdministrativosPercent: Number(f.gastosAdministrativosPercent.value),
+    contingenciaPercent: Number(f.contingenciaPercent.value),
+    margenMinimoPercent: Number(f.margenMinimoPercent.value),
+    margenRecomendadoPercent: Number(f.margenRecomendadoPercent.value),
+    margenMaximoPercent: Number(f.margenMaximoPercent.value),
+    complejidadMediaPercent: Number(f.complejidadMediaPercent.value),
+    complejidadAltaPercent: Number(f.complejidadAltaPercent.value),
+    capacitacionInicialHoras: Number(f.capacitacionInicialHoras.value),
+    supervisionCampoHorasPorCiclo: Number(f.supervisionCampoHorasPorCiclo.value),
+    aplicarRevisitasPercent: f.aplicarRevisitasPercent.checked,
+    revisitasPercent: Number(f.revisitasPercent.value),
+    aplicarAusenciasPercent: f.aplicarAusenciasPercent.checked,
+    ausenciasPercent: Number(f.ausenciasPercent.value),
+    correccionesRondasIncluidas: Number(f.correccionesRondasIncluidas.value),
+    horasPorRondaCorreccionExtra: Number(f.horasPorRondaCorreccionExtra.value),
+    reunionesIncluidas: Number(f.reunionesIncluidas.value),
+    horasPorReunionExtra: Number(f.horasPorReunionExtra.value),
+    aplicarGastoTelefonia: f.aplicarGastoTelefonia.checked,
+    aplicarCostoHerramientas: f.aplicarCostoHerramientas.checked,
+    aplicarOtrosGastosOperativos: f.aplicarOtrosGastosOperativos.checked,
+    recargoUrgenciaPercent: Number(f.recargoUrgenciaPercent.value),
+    ivaPercent: Number(f.ivaPercent.value),
+    descuentoMaximoPercent: Number(f.descuentoMaximoPercent.value),
+    aguinaldoPercent: Number(f.aguinaldoPercent.value),
+    ipsPatronalPercent: Number(f.ipsPatronalPercent.value),
+    otrosCostosLaboralesPercent: Number(f.otrosCostosLaboralesPercent.value),
+    recargoNocturnoPercent: Number(f.recargoNocturnoPercent.value),
+    recargoFinDeSemanaPercent: Number(f.recargoFinDeSemanaPercent.value),
+
+    auditPrepMinutos: Number(f.auditPrepMinutos.value),
+    auditMinutosPorProducto: Number(f.auditMinutosPorProducto.value),
+    auditMinutosEvidenciaPorProducto: Number(f.auditMinutosEvidenciaPorProducto.value),
+    auditMinutosCierreFormulario: Number(f.auditMinutosCierreFormulario.value),
+    auditMinutosEsperaPromedio: Number(f.auditMinutosEsperaPromedio.value),
+    auditMinutosTrasladoEntrePdv: Number(f.auditMinutosTrasladoEntrePdv.value),
+    auditJornadaEfectivaHoras: Number(f.auditJornadaEfectivaHoras.value),
+
+    msMinutosTraslado: Number(f.msMinutosTraslado.value),
+    msMinutosEspera: Number(f.msMinutosEspera.value),
+    msMinutosInteraccion: Number(f.msMinutosInteraccion.value),
+    msMinutosPorProductoServicio: Number(f.msMinutosPorProductoServicio.value),
+    msMinutosCargaEvidencia: Number(f.msMinutosCargaEvidencia.value),
+    msMinutosInformeVisita: Number(f.msMinutosInformeVisita.value),
+    msJornadaEfectivaHorasDia: Number(f.msJornadaEfectivaHorasDia.value),
+    msMinutosGestionRemota: Number(f.msMinutosGestionRemota.value),
+    msHorasDisenoGuion: Number(f.msHorasDisenoGuion.value),
+    msHorasAnalisisInforme: Number(f.msHorasAnalisisInforme.value),
+  };
+
+  CAMPOS_MONEDA_CONFIG.forEach((campo) => {
+    nuevaConfig[campo] = parseMilesValue(f[campo].value);
+  });
+
+  const camposNumericos = [
+    ...CAMPOS_MONEDA_CONFIG, 'surchargeGranAsuncionPercent',
+    'surchargeInteriorPercent', 'pdvPerAuditor', 'gastosAdministrativosPercent',
+    'contingenciaPercent', 'margenMinimoPercent', 'margenRecomendadoPercent', 'margenMaximoPercent',
+    'complejidadMediaPercent', 'complejidadAltaPercent', 'capacitacionInicialHoras',
+    'supervisionCampoHorasPorCiclo', 'revisitasPercent', 'ausenciasPercent',
+    'correccionesRondasIncluidas', 'horasPorRondaCorreccionExtra', 'reunionesIncluidas',
+    'horasPorReunionExtra', 'recargoUrgenciaPercent',
+    'ivaPercent', 'descuentoMaximoPercent',
+    'aguinaldoPercent', 'ipsPatronalPercent', 'otrosCostosLaboralesPercent',
+    'recargoNocturnoPercent', 'recargoFinDeSemanaPercent',
+    'auditPrepMinutos', 'auditMinutosPorProducto', 'auditMinutosEvidenciaPorProducto',
+    'auditMinutosCierreFormulario', 'auditMinutosEsperaPromedio', 'auditMinutosTrasladoEntrePdv',
+    'auditJornadaEfectivaHoras',
+    'msMinutosTraslado', 'msMinutosEspera', 'msMinutosInteraccion', 'msMinutosPorProductoServicio',
+    'msMinutosCargaEvidencia', 'msMinutosInformeVisita', 'msJornadaEfectivaHorasDia',
+    'msMinutosGestionRemota', 'msHorasDisenoGuion', 'msHorasAnalisisInforme',
+  ];
+  const negativos = camposNumericos.filter((c) => nuevaConfig[c] < 0);
+  if (negativos.length) {
+    alert('Los siguientes campos no pueden ser negativos: ' + negativos.join(', '));
+    return;
+  }
+
+  saveConfig(nuevaConfig);
+  alert('Configuración de costos guardada correctamente.');
+}
+
+function exportarConfiguracion() {
+  const config = getConfig();
+  const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'configuracion-cotizador-pdv.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importarConfiguracion(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    try {
+      const imported = JSON.parse(evt.target.result);
+      if (!imported.scales || !Array.isArray(imported.scales)) {
+        throw new Error('El archivo no tiene el formato esperado.');
+      }
+      if (confirm('¿Importar esta configuración? Se reemplazará la configuración actual.')) {
+        saveConfig(imported);
+        renderConfiguracion();
+        alert('Configuración importada correctamente.');
+      }
+    } catch (err) {
+      alert('No se pudo importar el archivo: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+/* ==========================================================================
+   7. UI - HISTORIAL
+   ========================================================================== */
+
+function initHistorial() {
+  document.getElementById('buscadorHistorial').addEventListener('input', renderHistorial);
+  document.getElementById('filtroEstado').addEventListener('change', renderHistorial);
+  document.getElementById('filtroZona').addEventListener('change', renderHistorial);
+  document.getElementById('filtroFechaDesde').addEventListener('change', renderHistorial);
+  document.getElementById('filtroFechaHasta').addEventListener('change', renderHistorial);
+}
+
+function renderHistorial() {
+  const historial = getHistory();
+  const busqueda = (document.getElementById('buscadorHistorial').value || '').toLowerCase();
+  const estado = document.getElementById('filtroEstado').value;
+  const zona = document.getElementById('filtroZona').value;
+  const desde = document.getElementById('filtroFechaDesde').value;
+  const hasta = document.getElementById('filtroFechaHasta').value;
+
+  const filtrado = historial.filter((q) => {
+    const coincideTexto = !busqueda ||
+      q.cliente.toLowerCase().includes(busqueda) ||
+      q.numero.toLowerCase().includes(busqueda);
+    const coincideEstado = !estado || q.estado === estado;
+    const coincideZona = !zona || q.zona === zona;
+    const coincideDesde = !desde || q.fecha >= desde;
+    const coincideHasta = !hasta || q.fecha <= hasta;
+    return coincideTexto && coincideEstado && coincideZona && coincideDesde && coincideHasta;
+  });
+
+  const tbody = document.getElementById('tablaHistorialBody');
+  const zonaLabel = ZONA_LABELS;
+
+  if (filtrado.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">No hay cotizaciones que coincidan con la búsqueda.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtrado.slice().reverse().map((q) => `
+    <tr>
+      <td>${q.numero}</td>
+      <td>${q.cliente}</td>
+      <td>${SERVICE_TYPE_LABELS[q.servicio] || SERVICE_TYPE_LABELS.auditoria}</td>
+      <td>${q.fecha}</td>
+      <td>${q.pdv}</td>
+      <td>${zonaLabel[q.zona] || q.zona}</td>
+      <td>${formatearMoneda(q.total, getConfig().moneda)}</td>
+      <td>
+        <select class="input-sm select-estado" data-id="${q.id}">
+          ${['Borrador', 'Enviada', 'Aprobada', 'Rechazada', 'Vencida'].map((e) =>
+            `<option value="${e}" ${e === q.estado ? 'selected' : ''}>${e}</option>`).join('')}
+        </select>
+      </td>
+      <td class="col-actions">
+        <button class="btn btn-tiny btn-secondary btn-ver" data-id="${q.id}">Ver</button>
+        <button class="btn btn-tiny btn-secondary btn-editar" data-id="${q.id}">Editar</button>
+        <button class="btn btn-tiny btn-secondary btn-duplicar" data-id="${q.id}">Duplicar</button>
+        <button class="btn btn-tiny btn-secondary btn-pdf" data-id="${q.id}">PDF</button>
+        <button class="btn btn-tiny btn-danger btn-eliminar" data-id="${q.id}">Eliminar</button>
+      </td>
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('.select-estado').forEach((sel) => {
+    sel.addEventListener('change', (e) => {
+      const historial = getHistory();
+      const record = historial.find((q) => q.id === e.target.getAttribute('data-id'));
+      record.estado = e.target.value;
+      saveHistory(historial);
+    });
+  });
+
+  tbody.querySelectorAll('.btn-ver').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const record = getHistory().find((q) => q.id === e.target.getAttribute('data-id'));
+      mostrarVistaPrevia(record.resultado, getConfig(), record.numero);
+    });
+  });
+
+  tbody.querySelectorAll('.btn-editar').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const record = getHistory().find((q) => q.id === e.target.getAttribute('data-id'));
+      cargarCotizacionEnFormulario(record);
+      cambiarVista('nueva');
+    });
+  });
+
+  tbody.querySelectorAll('.btn-duplicar').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const record = getHistory().find((q) => q.id === e.target.getAttribute('data-id'));
+      const historial = getHistory();
+      const nuevoNumero = getNextQuoteNumber();
+      const copia = JSON.parse(JSON.stringify(record));
+      copia.id = cryptoId();
+      copia.numero = nuevoNumero;
+      copia.estado = 'Borrador';
+      historial.push(copia);
+      saveHistory(historial);
+      renderHistorial();
+      alert(`Cotización duplicada como ${nuevoNumero}.`);
+    });
+  });
+
+  tbody.querySelectorAll('.btn-pdf').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const record = getHistory().find((q) => q.id === e.target.getAttribute('data-id'));
+      generarPdf(record.resultado, getConfig(), record.numero, 'interno');
+    });
+  });
+
+  tbody.querySelectorAll('.btn-eliminar').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      if (!confirm('¿Eliminar esta cotización del historial? Esta acción no se puede deshacer.')) return;
+      const id = e.target.getAttribute('data-id');
+      const historial = getHistory().filter((q) => q.id !== id);
+      saveHistory(historial);
+      renderHistorial();
+    });
+  });
+}
+
+function cargarCotizacionEnFormulario(record) {
+  const inputs = record.resultado.inputs;
+  const f = document.getElementById('formCotizacion');
+  Object.keys(inputs).forEach((key) => {
+    if (!f[key]) return;
+    if (f[key].type === 'checkbox') {
+      f[key].checked = !!inputs[key];
+    } else {
+      f[key].value = inputs[key];
+    }
+  });
+  actualizarCamposPorTipoServicio(inputs.serviceType === 'mysteryShopper' ? 'mysteryShopper' : 'auditoria');
+  f.serviceType.value = inputs.serviceType === 'mysteryShopper' ? 'mysteryShopper' : 'auditoria';
+  document.getElementById('departmentWrapper').style.display =
+    (inputs.zone === 'interior' || inputs.zone === 'granAsuncion') ? 'block' : 'none';
+  document.getElementById('zoneSplitWrapper').style.display =
+    inputs.zone === 'combinada' ? 'block' : 'none';
+  document.getElementById('auditorsCountWrapper').style.display =
+    inputs.auditorsMode === 'manual' ? 'block' : 'none';
+  attachMilesFormatting(document.getElementById('extraCostManual'));
+
+  APP_STATE.editingQuoteId = record.id;
+  const config = getConfig();
+  const resultado = calcularCotizacion(inputs, config);
+  APP_STATE.lastResult = resultado;
+  renderResultado(resultado, config);
+}
+
+/* ==========================================================================
+   8. VISTA PREVIA / PDF
+   ========================================================================== */
+
+function mostrarVistaPrevia(resultado, config, numero) {
+  const modal = document.getElementById('modalVistaPrevia');
+  const contenido = document.getElementById('modalVistaPreviaContenido');
+  contenido.innerHTML = construirHtmlPreview(resultado, config, numero, 'cliente');
+  modal.classList.add('open');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const closeBtn = document.getElementById('btnCerrarModal');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      document.getElementById('modalVistaPrevia').classList.remove('open');
+    });
+  }
+  const modal = document.getElementById('modalVistaPrevia');
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.classList.remove('open');
+    });
+  }
+});
+
+function construirHtmlPreview(resultado, config, numero, tipo) {
+  const { inputs } = resultado;
+  if (esMysteryShopper(inputs)) {
+    return construirHtmlPreviewMysteryShopper(resultado, config, numero, tipo);
+  }
+  return construirHtmlPreviewAuditoria(resultado, config, numero, tipo);
+}
+
+function construirHtmlPreviewAuditoria(resultado, config, numero, tipo) {
+  const { inputs, desglose, ciclos, totalProductos, totalVisitas, costoMensualEstimado } = resultado;
+  const zonaLabel = ZONA_LABELS[inputs.zone] || inputs.zone;
+  const detalleZonaCombinada = inputs.zone === 'combinada'
+    ? ` (Asunción: ${inputs.pdvAsuncion || 0} · Gran Asunción: ${inputs.pdvGranAsuncion || 0} · Interior: ${inputs.pdvInterior || 0})`
+    : '';
+
+  const entregables = [];
+  if (inputs.requiresInforme) entregables.push('Informe final');
+  if (inputs.requiresDashboard) entregables.push('Dashboard de resultados');
+  if (inputs.requiresPresentacion) entregables.push('Presentación de resultados');
+  if (inputs.requiresFotografia) entregables.push('Evidencia fotográfica');
+
+  const tablaCostos = tipo === 'interno' ? `
+      <h3>Costos internos</h3>
+      <table class="breakdown-table">
+        <tbody>
+          <tr><td>Subtotal recurrente (precio de escala + recargos)</td><td>${formatearMoneda(desglose.subtotalRecurrente, config.moneda)}</td></tr>
+          <tr><td>Recargo de zona</td><td>${formatearMoneda(desglose.recargoZona, config.moneda)}</td></tr>
+          <tr><td>Costo interno total (mano de obra, operativos, servicios)</td><td>${formatearMoneda(desglose.costoInternoTotal, config.moneda)}</td></tr>
+          <tr><td>Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
+          <tr class="subtotal-row"><td>Costo con gastos</td><td>${formatearMoneda(desglose.costoConGastos, config.moneda)}</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Rango comercial y precio final</h3>
+      <table class="breakdown-table">
+        <tbody>
+          <tr><td>Precio mínimo (margen ${desglose.margenMinimoPercent}%)</td><td>${formatearMoneda(desglose.rangoComercial.minimo, config.moneda)}</td></tr>
+          <tr><td>Precio recomendado (margen ${desglose.margenPercent}%)</td><td>${formatearMoneda(desglose.rangoComercial.recomendado, config.moneda)}</td></tr>
+          <tr><td>Precio máximo (margen ${desglose.margenMaximoPercent}%)</td><td>${formatearMoneda(desglose.rangoComercial.maximo, config.moneda)}</td></tr>
+          <tr class="total-row"><td>PRECIO FINAL ELEGIDO (${PRECIO_FINAL_MODO_LABELS[desglose.precioFinalModo] || desglose.precioFinalModo})</td><td>${formatearMoneda(desglose.precioFinalElegido, config.moneda)}</td></tr>
+          <tr><td>Margen real</td><td>${formatearMoneda(desglose.margenRealGs, config.moneda)} (${desglose.margenRealPercent.toFixed(1)}%)</td></tr>
+        </tbody>
+      </table>
+      ${desglose.advertenciaPrecioBajoMinimo ? '<p class="muted" style="color:#b3261e;font-size:12px;"><strong>Atención:</strong> el precio final elegido está por debajo del precio mínimo recomendado.</p>' : ''}
+  ` : construirTablaCostosCliente(desglose, config);
+
+  return `
+    <div class="preview-doc">
+      <h2>Cotización de Servicios de Auditoría en PDV</h2>
+      <p class="muted">N° ${numero} · Fecha: ${inputs.quoteDate}${inputs.validity ? ' · Vigencia: ' + inputs.validity + ' días' : ''}</p>
+      <hr>
+      <h3>Cliente</h3>
+      <p>${inputs.clientName}${inputs.contactName ? ' — Contacto: ' + inputs.contactName : ''}</p>
+      ${inputs.projectName ? `<p>Proyecto: ${inputs.projectName}</p>` : ''}
+
+      <h3>Alcance del servicio</h3>
+      <table class="breakdown-table">
+        <tbody>
+          <tr><td>Tipo de servicio</td><td>${SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType}</td></tr>
+          <tr><td>Cantidad de PDV</td><td>${inputs.pdvCount}</td></tr>
+          <tr><td>Productos por PDV</td><td>${inputs.productsPerPdv}</td></tr>
+          <tr><td>Total de productos a auditar</td><td>${totalProductos.toLocaleString('es-PY')}</td></tr>
+          <tr><td>Zona</td><td>${zonaLabel}${inputs.department ? ' - ' + inputs.department : ''}${detalleZonaCombinada}</td></tr>
+          <tr><td>Visitas totales</td><td>${totalVisitas}</td></tr>
+          <tr><td>Duración</td><td>${inputs.durationMonths} mes(es)</td></tr>
+          ${entregables.length ? `<tr><td>Entregables incluidos</td><td>${entregables.join(', ')}</td></tr>` : ''}
+        </tbody>
+      </table>
+
+      ${tablaCostos}
+
+      <p class="muted" style="margin-top:16px;font-size:12px;">
+        Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo,
+        ubicación de los puntos de venta y requerimientos adicionales del cliente.
+      </p>
+    </div>
+  `;
+}
+
+// Etiquetas legibles del modo de precio final elegido.
+const PRECIO_FINAL_MODO_LABELS = {
+  minimo: 'precio mínimo', recomendado: 'precio recomendado', maximo: 'precio máximo', manual: 'precio manual',
+};
+
+/**
+ * Tabla de "Costos" para la VERSIÓN CLIENTE: solo el precio final elegido,
+ * el IVA correspondiente y el total. Nunca muestra costo por hora, sueldos,
+ * cargas sociales, costo interno, margen, contingencia ni el rango interno.
+ */
+function construirTablaCostosCliente(desglose, config) {
+  const ivaPercent = Number(desglose.ivaPercent) || 0;
+  const precioFinal = desglose.precioFinalElegido;
+  const subtotalSinIva = precioFinal / (1 + ivaPercent / 100);
+  const montoIvaDelPrecioFinal = precioFinal - subtotalSinIva;
+
+  return `
+      <h3>Costos</h3>
+      <table class="breakdown-table">
+        <tbody>
+          <tr><td>Subtotal</td><td>${formatearMoneda(subtotalSinIva, config.moneda)}</td></tr>
+          <tr><td>IVA (${ivaPercent}%)</td><td>${formatearMoneda(montoIvaDelPrecioFinal, config.moneda)}</td></tr>
+          <tr class="total-row"><td>TOTAL</td><td>${formatearMoneda(precioFinal, config.moneda)}</td></tr>
+        </tbody>
+      </table>
+  `;
+}
+
+function construirHtmlPreviewMysteryShopper(resultado, config, numero, tipo) {
+  const { inputs, desglose, totalVisitas, totalInteracciones } = resultado;
+
+  const tablaCostos = tipo === 'interno' ? `
+      <h3>Costos internos</h3>
+      <table class="breakdown-table">
+        <tbody>
+          <tr><td>Mano de obra — campo presencial</td><td>${formatearMoneda(desglose.costoCampoManoObra, config.moneda)}</td></tr>
+          <tr><td>Viáticos de movilidad</td><td>${formatearMoneda(desglose.viaticosTotales, config.moneda)}</td></tr>
+          <tr><td>Mano de obra — canales remotos</td><td>${formatearMoneda(desglose.costoRemotoManoObra, config.moneda)}</td></tr>
+          <tr><td>Coordinación y análisis</td><td>${formatearMoneda(desglose.costoCoordinacion, config.moneda)}</td></tr>
+          <tr class="subtotal-row"><td>Costo interno total</td><td>${formatearMoneda(desglose.costoInternoTotal, config.moneda)}</td></tr>
+          <tr><td>Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
+          <tr class="subtotal-row"><td>Costo con gastos</td><td>${formatearMoneda(desglose.costoConGastos, config.moneda)}</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Rango comercial y precio final</h3>
+      <table class="breakdown-table">
+        <tbody>
+          <tr><td>Precio mínimo (margen ${desglose.margenMinimoPercent}%)</td><td>${formatearMoneda(desglose.rangoComercial.minimo, config.moneda)}</td></tr>
+          <tr><td>Precio recomendado (margen ${desglose.margenPercent}%)</td><td>${formatearMoneda(desglose.rangoComercial.recomendado, config.moneda)}</td></tr>
+          <tr><td>Precio máximo (margen ${desglose.margenMaximoPercent}%)</td><td>${formatearMoneda(desglose.rangoComercial.maximo, config.moneda)}</td></tr>
+          <tr class="total-row"><td>PRECIO FINAL ELEGIDO (${PRECIO_FINAL_MODO_LABELS[desglose.precioFinalModo] || desglose.precioFinalModo})</td><td>${formatearMoneda(desglose.precioFinalElegido, config.moneda)}</td></tr>
+          <tr><td>Margen real</td><td>${formatearMoneda(desglose.margenRealGs, config.moneda)} (${desglose.margenRealPercent.toFixed(1)}%)</td></tr>
+        </tbody>
+      </table>
+      ${desglose.advertenciaPrecioBajoMinimo ? '<p class="muted" style="color:#b3261e;font-size:12px;"><strong>Atención:</strong> el precio final elegido está por debajo del precio mínimo recomendado.</p>' : ''}
+  ` : construirTablaCostosCliente(desglose, config);
+
+  return `
+    <div class="preview-doc">
+      <h2>Cotización de Servicios de Mystery Shopper</h2>
+      <p class="muted">N° ${numero} · Fecha: ${inputs.quoteDate}${inputs.validity ? ' · Vigencia: ' + inputs.validity + ' días' : ''}</p>
+      <hr>
+      <h3>Cliente</h3>
+      <p>${inputs.clientName}${inputs.contactName ? ' — Contacto: ' + inputs.contactName : ''}</p>
+      ${inputs.projectName ? `<p>Proyecto: ${inputs.projectName}</p>` : ''}
+
+      <h3>Alcance del servicio</h3>
+      <table class="breakdown-table">
+        <tbody>
+          <tr><td>Tipo de servicio</td><td>${SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType}</td></tr>
+          <tr><td>Empresas a monitorear</td><td>${inputs.msAseguradorasCount || 0}</td></tr>
+          <tr><td>Sucursales a visitar (presencial)</td><td>${inputs.msSucursalesPresencial || 0}</td></tr>
+          <tr><td>Canales remotos por empresa</td><td>${inputs.msCanalesRemotos || 0}</td></tr>
+          <tr><td>Rondas de relevamiento</td><td>${inputs.msRondas || 1}</td></tr>
+          <tr><td>Plazo deseado</td><td>${inputs.msPlazoDeseadoDias || 0} días hábiles</td></tr>
+          <tr><td>Visitas presenciales totales</td><td>${totalVisitas}</td></tr>
+          <tr><td>Interacciones remotas totales</td><td>${totalInteracciones}</td></tr>
+        </tbody>
+      </table>
+
+      ${tablaCostos}
+
+      <p class="muted" style="margin-top:16px;font-size:12px;">
+        Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo
+        y requerimientos adicionales del cliente.
+      </p>
+    </div>
+  `;
+}
+
+function generarPdf(resultado, config, numero, tipo) {
+  if (!window.jspdf) {
+    alert('No se pudo cargar la librería de generación de PDF. Verifique su conexión a internet.');
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const { inputs } = resultado;
+  const margin = 40;
+  let y = margin;
+  const lineHeight = 16;
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  function addLine(text, opts = {}) {
+    const size = opts.size || 10;
+    doc.setFontSize(size);
+    doc.setFont(undefined, opts.bold ? 'bold' : 'normal');
+    if (y > 780) {
+      doc.addPage();
+      y = margin;
+    }
+    doc.text(text, margin, y);
+    y += opts.lh || lineHeight;
+  }
+
+  function addRow(label, value) {
+    if (y > 780) {
+      doc.addPage();
+      y = margin;
+    }
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+    doc.text(label, margin, y);
+    doc.text(value, pageWidth - margin, y, { align: 'right' });
+    y += lineHeight;
+  }
+
+  const ctx = { doc, margin, lineHeight, pageWidth, addLine, addRow, getY: () => y, setY: (v) => { y = v; } };
+
+  if (esMysteryShopper(inputs)) {
+    generarCuerpoPdfMysteryShopper(ctx, resultado, config, numero, tipo);
+  } else {
+    generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo);
+  }
+
+  const sufijo = tipo === 'interno' ? 'interno' : 'cliente';
+  doc.save(`${numero.replace(/\s.*$/, '')}-${sufijo}.pdf`);
+}
+
+function generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo) {
+  const { addLine, addRow, margin, pageWidth, doc } = ctx;
+  const { inputs, desglose, ciclos, totalProductos, totalVisitas } = resultado;
+  let y = ctx.getY();
+
+  const zonaLabel = ZONA_LABELS[inputs.zone] || inputs.zone;
+  const detalleZonaCombinada = inputs.zone === 'combinada'
+    ? ` (Asu: ${inputs.pdvAsuncion || 0} / G.Asu: ${inputs.pdvGranAsuncion || 0} / Int: ${inputs.pdvInterior || 0})`
+    : '';
+
+  addLine('Cotización de Servicios de Auditoría en PDV', { size: 16, bold: true, lh: 24 });
+  addLine(`N° ${numero}  ·  Fecha: ${inputs.quoteDate}${inputs.validity ? '  ·  Vigencia: ' + inputs.validity + ' días' : ''}`, { size: 10, lh: 22 });
+
+  addLine('DATOS DEL CLIENTE', { bold: true, size: 12, lh: 18 });
+  addRow('Cliente', inputs.clientName);
+  if (inputs.contactName) addRow('Contacto', inputs.contactName);
+  if (inputs.projectName) addRow('Proyecto', inputs.projectName);
+  y = ctx.getY() + 8; ctx.setY(y);
+
+  addLine('ALCANCE DEL SERVICIO', { bold: true, size: 12, lh: 18 });
+  addRow('Tipo de servicio', SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType);
+  addRow('Cantidad de PDV', String(inputs.pdvCount));
+  addRow('Productos por PDV', String(inputs.productsPerPdv));
+  addRow('Total de productos a auditar', totalProductos.toLocaleString('es-PY'));
+  addRow('Zona', zonaLabel + (inputs.department ? ' - ' + inputs.department : '') + detalleZonaCombinada);
+  addRow('Visitas totales', String(totalVisitas));
+  addRow('Duración', `${inputs.durationMonths} mes(es) (${ciclos} ciclos)`);
+  y = ctx.getY() + 8; ctx.setY(y);
+
+  if (tipo === 'interno') {
+    addRow('Auditores requeridos', String(desglose.cantidadAuditores));
+    addLine('COSTOS INTERNOS', { bold: true, size: 12, lh: 18 });
+    addRow('Precio base por ciclo (escala)', formatearMoneda(desglose.precioBaseCiclo, config.moneda));
+    addRow('Recargo productos/visitas adicionales (por ciclo)', formatearMoneda(desglose.recargoProductosCiclo + desglose.recargoVisitasCiclo, config.moneda));
+    addRow(`Subtotal recurrente (x${ciclos})`, formatearMoneda(desglose.subtotalRecurrente, config.moneda));
+    addRow(`Recargo de zona (${desglose.porcentajeZona.toFixed(2)}%)`, formatearMoneda(desglose.recargoZona, config.moneda));
+    addRow('Costo interno total (mano de obra, operativos, servicios)', formatearMoneda(desglose.costoInternoTotal, config.moneda));
+    addRow(`Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)`, formatearMoneda(desglose.montoGastosYContingencia, config.moneda));
+    addRow('Costo con gastos', formatearMoneda(desglose.costoConGastos, config.moneda));
+    y = ctx.getY() + 8; ctx.setY(y);
+
+    addLine('RANGO COMERCIAL Y PRECIO FINAL', { bold: true, size: 12, lh: 18 });
+    addRow(`Precio mínimo (margen ${desglose.margenMinimoPercent}%)`, formatearMoneda(desglose.rangoComercial.minimo, config.moneda));
+    addRow(`Precio recomendado (margen ${desglose.margenPercent}%)`, formatearMoneda(desglose.rangoComercial.recomendado, config.moneda));
+    addRow(`Precio máximo (margen ${desglose.margenMaximoPercent}%)`, formatearMoneda(desglose.rangoComercial.maximo, config.moneda));
+    addRow(`Margen real`, `${formatearMoneda(desglose.margenRealGs, config.moneda)} (${desglose.margenRealPercent.toFixed(1)}%)`);
+
+    y = ctx.getY() + 4; ctx.setY(y);
+    doc.setDrawColor(200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 18; ctx.setY(y);
+    addLine(`PRECIO FINAL ELEGIDO (${PRECIO_FINAL_MODO_LABELS[desglose.precioFinalModo] || desglose.precioFinalModo}): ${formatearMoneda(desglose.precioFinalElegido, config.moneda)}`, { bold: true, size: 13, lh: 20 });
+    if (desglose.advertenciaPrecioBajoMinimo) {
+      addLine('ATENCIÓN: el precio final elegido está por debajo del precio mínimo recomendado.', { size: 9, lh: 14 });
+    }
+  } else {
+    const ivaPercent = Number(desglose.ivaPercent) || 0;
+    const precioFinal = desglose.precioFinalElegido;
+    const subtotalSinIva = precioFinal / (1 + ivaPercent / 100);
+    const montoIvaDelPrecioFinal = precioFinal - subtotalSinIva;
+
+    addLine('COSTOS', { bold: true, size: 12, lh: 18 });
+    addRow('Subtotal', formatearMoneda(subtotalSinIva, config.moneda));
+    addRow(`IVA (${ivaPercent}%)`, formatearMoneda(montoIvaDelPrecioFinal, config.moneda));
+
+    y = ctx.getY() + 4; ctx.setY(y);
+    doc.setDrawColor(200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 18; ctx.setY(y);
+    addLine(`TOTAL: ${formatearMoneda(precioFinal, config.moneda)}`, { bold: true, size: 13, lh: 20 });
+  }
+
+  agregarDisclaimerPdf(ctx, 'Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo, ubicación de los puntos de venta y requerimientos adicionales del cliente.');
+}
+
+function generarCuerpoPdfMysteryShopper(ctx, resultado, config, numero, tipo) {
+  const { addLine, addRow, margin, pageWidth, doc } = ctx;
+  const { inputs, desglose, totalVisitas, totalInteracciones } = resultado;
+  let y;
+
+  addLine('Cotización de Servicios de Mystery Shopper', { size: 16, bold: true, lh: 24 });
+  addLine(`N° ${numero}  ·  Fecha: ${inputs.quoteDate}${inputs.validity ? '  ·  Vigencia: ' + inputs.validity + ' días' : ''}`, { size: 10, lh: 22 });
+
+  addLine('DATOS DEL CLIENTE', { bold: true, size: 12, lh: 18 });
+  addRow('Cliente', inputs.clientName);
+  if (inputs.contactName) addRow('Contacto', inputs.contactName);
+  if (inputs.projectName) addRow('Proyecto', inputs.projectName);
+  y = ctx.getY() + 8; ctx.setY(y);
+
+  addLine('ALCANCE DEL SERVICIO', { bold: true, size: 12, lh: 18 });
+  addRow('Tipo de servicio', SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType);
+  addRow('Empresas a monitorear', String(inputs.msAseguradorasCount || 0));
+  addRow('Sucursales a visitar (presencial)', String(inputs.msSucursalesPresencial || 0));
+  addRow('Canales remotos por empresa', String(inputs.msCanalesRemotos || 0));
+  addRow('Rondas de relevamiento', String(inputs.msRondas || 1));
+  addRow('Plazo deseado', `${inputs.msPlazoDeseadoDias || 0} días hábiles`);
+  addRow('Visitas presenciales totales', String(totalVisitas));
+  addRow('Interacciones remotas totales', String(totalInteracciones));
+  y = ctx.getY() + 8; ctx.setY(y);
+
+  if (tipo === 'interno') {
+    addRow('Mystery shoppers necesarios', String(desglose.shoppersNecesarios));
+    addLine('COSTOS INTERNOS', { bold: true, size: 12, lh: 18 });
+    addRow('Mano de obra — campo presencial', formatearMoneda(desglose.costoCampoManoObra, config.moneda));
+    addRow('Viáticos de movilidad', formatearMoneda(desglose.viaticosTotales, config.moneda));
+    addRow('Mano de obra — canales remotos', formatearMoneda(desglose.costoRemotoManoObra, config.moneda));
+    addRow('Coordinación y análisis', formatearMoneda(desglose.costoCoordinacion, config.moneda));
+    addRow('Costo interno total', formatearMoneda(desglose.costoInternoTotal, config.moneda));
+    addRow(`Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)`, formatearMoneda(desglose.montoGastosYContingencia, config.moneda));
+    addRow('Costo con gastos', formatearMoneda(desglose.costoConGastos, config.moneda));
+    y = ctx.getY() + 8; ctx.setY(y);
+
+    addLine('RANGO COMERCIAL Y PRECIO FINAL', { bold: true, size: 12, lh: 18 });
+    addRow(`Precio mínimo (margen ${desglose.margenMinimoPercent}%)`, formatearMoneda(desglose.rangoComercial.minimo, config.moneda));
+    addRow(`Precio recomendado (margen ${desglose.margenPercent}%)`, formatearMoneda(desglose.rangoComercial.recomendado, config.moneda));
+    addRow(`Precio máximo (margen ${desglose.margenMaximoPercent}%)`, formatearMoneda(desglose.rangoComercial.maximo, config.moneda));
+    addRow('Margen real', `${formatearMoneda(desglose.margenRealGs, config.moneda)} (${desglose.margenRealPercent.toFixed(1)}%)`);
+
+    y = ctx.getY() + 4; ctx.setY(y);
+    doc.setDrawColor(200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 18; ctx.setY(y);
+    addLine(`PRECIO FINAL ELEGIDO (${PRECIO_FINAL_MODO_LABELS[desglose.precioFinalModo] || desglose.precioFinalModo}): ${formatearMoneda(desglose.precioFinalElegido, config.moneda)}`, { bold: true, size: 13, lh: 20 });
+    if (desglose.advertenciaPrecioBajoMinimo) {
+      addLine('ATENCIÓN: el precio final elegido está por debajo del precio mínimo recomendado.', { size: 9, lh: 14 });
+    }
+  } else {
+    const ivaPercent = Number(desglose.ivaPercent) || 0;
+    const precioFinal = desglose.precioFinalElegido;
+    const subtotalSinIva = precioFinal / (1 + ivaPercent / 100);
+    const montoIvaDelPrecioFinal = precioFinal - subtotalSinIva;
+
+    addLine('COSTOS', { bold: true, size: 12, lh: 18 });
+    addRow('Subtotal', formatearMoneda(subtotalSinIva, config.moneda));
+    addRow(`IVA (${ivaPercent}%)`, formatearMoneda(montoIvaDelPrecioFinal, config.moneda));
+
+    y = ctx.getY() + 4; ctx.setY(y);
+    doc.setDrawColor(200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 18; ctx.setY(y);
+    addLine(`TOTAL: ${formatearMoneda(precioFinal, config.moneda)}`, { bold: true, size: 13, lh: 20 });
+  }
+
+  agregarDisclaimerPdf(ctx, 'Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo y requerimientos adicionales del cliente.');
+}
+
+function agregarDisclaimerPdf(ctx, texto) {
+  const { doc, margin, pageWidth } = ctx;
+  let y = ctx.getY() + 10;
+  doc.setFontSize(8);
+  doc.setFont(undefined, 'italic');
+  const disclaimer = doc.splitTextToSize(texto, pageWidth - margin * 2);
+  doc.text(disclaimer, margin, y);
+}
+
+/* ==========================================================================
+   9. INICIALIZACION
+   ========================================================================== */
+
+document.addEventListener('DOMContentLoaded', () => {
+  getConfig(); // asegura que exista configuración en localStorage
+  initNavegacion();
+  initInfoTooltips();
+  initFormularioCotizacion();
+  actualizarCamposPorTipoServicio('auditoria');
+  initCalculoRapido();
+  initConfiguracion();
+  initHistorial();
+  cambiarVista('nueva');
+});

@@ -3,538 +3,1015 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cotizador de Auditorías PDV</title>
+<title>Cotizador de Auditorías en PDV</title>
 <link rel="stylesheet" href="styles.css">
-<!-- Tipografías vía Google Fonts (opcional: si no hay conexión, se usan las fuentes de sistema definidas como fallback en styles.css) -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<!-- jsPDF vía CDN, usado únicamente para exportar la cotización a PDF -->
+<!-- jsPDF vía CDN, para generar cotizaciones en PDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
 
 <div class="app-shell">
 
-  <!-- ====================== SIDEBAR / NAV ====================== -->
+  <!-- ===================== SIDEBAR ===================== -->
   <aside class="sidebar" id="sidebar">
-    <div class="brand">
-      <div class="brand-mark">PDV</div>
-      <div class="brand-text">
+    <div class="sidebar-brand">
+      <span class="brand-mark">PDV</span>
+      <div>
         <strong>Cotizador</strong>
-        <span>Auditorías en punto de venta</span>
+        <small>Auditorías en punto de venta</small>
       </div>
     </div>
-
-    <nav class="nav">
-      <button class="nav-btn is-active" data-view="nueva">
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-link active" data-view="nueva">
         <span class="nav-icon">＋</span> Nueva cotización
-      </button>
-      <button class="nav-btn" data-view="historial">
-        <span class="nav-icon">≡</span> Historial
-      </button>
-      <button class="nav-btn" data-view="config">
+      </a>
+      <a href="#" class="nav-link" data-view="rapido">
+        <span class="nav-icon">⚡</span> Cálculo rápido
+      </a>
+      <a href="#" class="nav-link" data-view="historial">
+        <span class="nav-icon">☰</span> Historial de cotizaciones
+      </a>
+      <a href="#" class="nav-link" data-view="config">
         <span class="nav-icon">⚙</span> Configuración de costos
-      </button>
+      </a>
     </nav>
-
     <div class="sidebar-footer">
-      <span id="quote-number-preview">COT-2026-001</span>
-      <small>Próximo número de cotización</small>
+      <small>Los precios de este sistema son configurables.<br>Ver sección "Configuración".</small>
     </div>
   </aside>
 
-  <!-- Botón hamburguesa para móvil -->
-  <button class="mobile-toggle" id="mobileToggle" aria-label="Abrir menú">☰</button>
+  <!-- ===================== TOPBAR (mobile) ===================== -->
+  <header class="topbar">
+    <button id="menuToggle" class="menu-toggle" aria-label="Abrir menú">☰</button>
+    <span class="topbar-title">Cotizador de Auditorías en PDV</span>
+  </header>
 
-  <!-- ====================== MAIN CONTENT ====================== -->
-  <main class="main">
+  <!-- ===================== CONTENIDO PRINCIPAL ===================== -->
+  <main class="main-content">
 
-    <!-- ---------- VISTA: NUEVA COTIZACIÓN ---------- -->
-    <section class="view is-active" id="view-nueva">
-      <header class="view-header">
-        <div>
-          <h1>Nueva cotización</h1>
-          <p class="subtitle">Completá los datos del cliente y del servicio para generar un costo estimado.</p>
-        </div>
-        <div class="header-actions">
-          <button class="btn btn-ghost" id="btnDuplicarActual" title="Duplicar la cotización actual del formulario">Duplicar</button>
-          <button class="btn btn-ghost" id="btnLimpiarForm">Limpiar formulario</button>
-        </div>
-      </header>
+    <!-- ============ VISTA: NUEVA COTIZACIÓN ============ -->
+    <section id="view-nueva" class="view active">
+      <div class="view-header">
+        <h1>Nueva cotización</h1>
+        <p class="muted">Complete los datos del cliente y del servicio para calcular un costo estimado.</p>
+      </div>
 
-      <form id="quoteForm" novalidate>
+      <div id="formErrors" class="alert alert-danger" style="display:none;"></div>
 
-        <div class="grid-2">
-          <!-- ---------- DATOS DEL CLIENTE ---------- -->
-          <fieldset class="card">
-            <legend>Datos del cliente</legend>
+      <form id="formCotizacion" class="card form-grid" autocomplete="off" novalidate>
 
-            <div class="field">
-              <label for="clienteNombre">Nombre del cliente o empresa *</label>
-              <input type="text" id="clienteNombre" required placeholder="Ej: Supermercados Don Luis S.A.">
-            </div>
+        <fieldset class="form-section">
+          <legend>Datos del cliente</legend>
 
-            <div class="field">
-              <label for="clienteContacto">Nombre del contacto</label>
-              <input type="text" id="clienteContacto" placeholder="Ej: María Benítez">
-            </div>
+          <div class="form-field">
+            <label for="clientName">Nombre del cliente o empresa * <button type="button" class="info-icon" data-info="clientName" aria-label="Información">i</button></label>
+            <input type="text" id="clientName" name="clientName" required>
+          </div>
 
-            <div class="field-row">
-              <div class="field">
-                <label for="fechaCotizacion">Fecha de cotización *</label>
-                <input type="date" id="fechaCotizacion" required>
-              </div>
-              <div class="field">
-                <label for="vigenciaDias">Vigencia (días) *</label>
-                <input type="number" id="vigenciaDias" min="1" value="15" required>
-              </div>
-            </div>
+          <div class="form-field">
+            <label for="contactName">Nombre del contacto <button type="button" class="info-icon" data-info="contactName" aria-label="Información">i</button></label>
+            <input type="text" id="contactName" name="contactName">
+          </div>
 
-            <div class="field">
-              <label for="nombreProyecto">Nombre del proyecto o campaña</label>
-              <input type="text" id="nombreProyecto" placeholder="Ej: Relevamiento Gaseosas Q3">
-            </div>
+          <div class="form-field">
+            <label for="quoteDate">Fecha de cotización * <button type="button" class="info-icon" data-info="quoteDate" aria-label="Información">i</button></label>
+            <input type="date" id="quoteDate" name="quoteDate" required>
+          </div>
 
-            <div class="field">
-              <label for="observaciones">Observaciones</label>
-              <textarea id="observaciones" rows="3" placeholder="Notas internas o comentarios para el cliente"></textarea>
-            </div>
-          </fieldset>
+          <div class="form-field">
+            <label for="projectName">Nombre del proyecto o campaña <button type="button" class="info-icon" data-info="projectName" aria-label="Información">i</button></label>
+            <input type="text" id="projectName" name="projectName">
+          </div>
 
-          <!-- ---------- DATOS DEL SERVICIO ---------- -->
-          <fieldset class="card">
-            <legend>Datos del servicio</legend>
+          <div class="form-field">
+            <label for="validity">Vigencia de la cotización (días) <button type="button" class="info-icon" data-info="validity" aria-label="Información">i</button></label>
+            <input type="number" id="validity" name="validity" min="1" value="15">
+          </div>
 
-            <div class="field">
-              <label for="tipoServicio">Tipo de servicio *</label>
-              <!-- Las opciones se generan desde app.js (constante SERVICE_TYPES),
-                   así al agregar un nuevo tipo de servicio no hace falta tocar este HTML. -->
-              <select id="tipoServicio"></select>
-            </div>
-
-            <div class="field">
-              <label for="cantidadPDV">Cantidad de puntos de venta (PDV) *</label>
-              <input type="number" id="cantidadPDV" min="1" required placeholder="Ej: 20">
-            </div>
-
-            <!-- Se muestra para tipos de servicio SIN puntos de evaluación configurados
-                 (ej: Auditoría PDV) -->
-            <div class="field" id="productosNumericoWrap">
-              <label for="productosPorPDV" id="labelProductosPorPDV">Productos aprox. por PDV *</label>
-              <input type="number" id="productosPorPDV" min="1" placeholder="Ej: 15">
-            </div>
-
-            <!-- Se muestra para tipos de servicio CON puntos de evaluación configurados
-                 (ej: Mystery Shopper). La lista de puntos se arma desde
-                 Configuración de costos > Puntos de evaluación a medir. -->
-            <div class="field" id="puntosEvaluacionWrap" style="display:none;">
-              <label>Puntos a evaluar en la visita *</label>
-              <div class="checks-grid" id="puntosEvaluacionChecklist"></div>
-              <small class="hint">La cantidad de puntos marcados se usa como "criterios evaluados por visita" para el cálculo de recargos por volumen.</small>
-            </div>
-
-            <div class="field-row">
-              <div class="field">
-                <label for="visitasPorPDV">Visitas por PDV (por ronda) *</label>
-                <input type="number" id="visitasPorPDV" min="1" value="1" required>
-              </div>
-              <div class="field">
-                <label for="frecuencia">Frecuencia *</label>
-                <select id="frecuencia">
-                  <option value="unica">Única vez</option>
-                  <option value="semanal">Semanal</option>
-                  <option value="quincenal">Quincenal</option>
-                  <option value="mensual">Mensual</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="field" id="duracionWrap">
-              <label for="duracionMeses">Duración del proyecto (meses) *</label>
-              <input type="number" id="duracionMeses" min="1" value="1" required>
-            </div>
-
-            <div class="field-row">
-              <div class="field">
-                <label for="zona">Zona *</label>
-                <select id="zona">
-                  <option value="asuncion">Asunción</option>
-                  <option value="gran_asuncion">Gran Asunción</option>
-                  <option value="interior">Interior</option>
-                </select>
-              </div>
-              <div class="field" id="deptoWrap" style="display:none;">
-                <label for="departamento">Departamento / Ciudad</label>
-                <input type="text" id="departamento" placeholder="Ej: Itapúa - Encarnación">
-              </div>
-            </div>
-
-            <div class="field">
-              <label>Cantidad de auditores necesarios *</label>
-              <div class="inline-toggle">
-                <label class="pill">
-                  <input type="radio" name="modoAuditores" value="automatico" checked>
-                  Automático
-                </label>
-                <label class="pill">
-                  <input type="radio" name="modoAuditores" value="manual">
-                  Manual
-                </label>
-              </div>
-              <input type="number" id="cantidadAuditores" min="1" style="margin-top:8px;" disabled placeholder="Se calcula automáticamente">
-            </div>
-          </fieldset>
-        </div>
-
-        <!-- ---------- REQUERIMIENTOS ADICIONALES ---------- -->
-        <fieldset class="card">
-          <legend>Requerimientos adicionales</legend>
-          <div class="checks-grid">
-            <label class="check"><input type="checkbox" id="reqTraslado"> Requiere traslado</label>
-            <label class="check"><input type="checkbox" id="reqAlojamiento"> Requiere alojamiento</label>
-            <label class="check"><input type="checkbox" id="reqViaticos"> Requiere viáticos</label>
-            <label class="check"><input type="checkbox" id="reqEvidencia"> Evidencia fotográfica</label>
-            <label class="check"><input type="checkbox" id="reqInforme"> Informe final</label>
-            <label class="check"><input type="checkbox" id="reqDashboard"> Dashboard / presentación de resultados</label>
+          <div class="form-field form-field-full">
+            <label for="notes">Observaciones <button type="button" class="info-icon" data-info="notes" aria-label="Información">i</button></label>
+            <textarea id="notes" name="notes" rows="2"></textarea>
           </div>
         </fieldset>
 
-        <!-- ---------- AJUSTES COMERCIALES ---------- -->
-        <fieldset class="card">
+        <fieldset class="form-section">
+          <legend>Tipo de servicio</legend>
+          <div class="form-field">
+            <label for="serviceType">Tipo de servicio <button type="button" class="info-icon" data-info="serviceType" aria-label="Información">i</button></label>
+            <select id="serviceType" name="serviceType">
+              <option value="auditoria">Auditoría en punto de venta</option>
+              <option value="mysteryShopper">Mystery Shopper</option>
+            </select>
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section" id="fieldsetAuditoria">
+          <legend>Alcance del servicio — Auditoría en PDV</legend>
+
+          <div class="form-field">
+            <label for="pdvCount">Cantidad de puntos de venta (PDV) * <button type="button" class="info-icon" data-info="pdvCount" aria-label="Información">i</button></label>
+            <input type="number" id="pdvCount" name="pdvCount" min="1">
+          </div>
+
+          <div class="form-field">
+            <label for="productsPerPdv">Productos aproximados por PDV * <button type="button" class="info-icon" data-info="productsPerPdv" aria-label="Información">i</button></label>
+            <input type="number" id="productsPerPdv" name="productsPerPdv" min="0">
+          </div>
+
+          <div class="form-field">
+            <label for="visitsPerPdv">Visitas por PDV (por ciclo) * <button type="button" class="info-icon" data-info="visitsPerPdv" aria-label="Información">i</button></label>
+            <input type="number" id="visitsPerPdv" name="visitsPerPdv" min="1" value="1">
+          </div>
+
+          <div class="form-field">
+            <label for="frequency">Frecuencia * <button type="button" class="info-icon" data-info="frequency" aria-label="Información">i</button></label>
+            <select id="frequency" name="frequency">
+              <option value="unica">Única</option>
+              <option value="semanal">Semanal</option>
+              <option value="quincenal">Quincenal</option>
+              <option value="mensual" selected>Mensual</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label for="durationMonths">Duración del proyecto (meses) * <button type="button" class="info-icon" data-info="durationMonths" aria-label="Información">i</button></label>
+            <input type="number" id="durationMonths" name="durationMonths" min="1" value="1">
+          </div>
+
+          <div class="form-field">
+            <label for="zone">Zona * <button type="button" class="info-icon" data-info="zone" aria-label="Información">i</button></label>
+            <select id="zone" name="zone">
+              <option value="asuncion">Asunción</option>
+              <option value="granAsuncion">Gran Asunción</option>
+              <option value="interior">Interior</option>
+              <option value="combinada">Combinada (Asunción + Gran Asunción + Interior)</option>
+            </select>
+          </div>
+
+          <div class="form-field" id="departmentWrapper" style="display:none;">
+            <label for="department">Departamento o ciudad <button type="button" class="info-icon" data-info="department" aria-label="Información">i</button></label>
+            <input type="text" id="department" name="department" placeholder="Ej: Ciudad del Este, Alto Paraná">
+          </div>
+
+          <div class="form-field form-field-full" id="zoneSplitWrapper" style="display:none;">
+            <label style="margin-bottom:8px;">Reparto de PDV por zona</label>
+            <div class="checkbox-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+              <div class="form-field">
+                <label for="pdvAsuncion">PDV en Asunción <button type="button" class="info-icon" data-info="pdvAsuncion" aria-label="Información">i</button></label>
+                <input type="number" id="pdvAsuncion" name="pdvAsuncion" min="0" value="0">
+              </div>
+              <div class="form-field">
+                <label for="pdvGranAsuncion">PDV en Gran Asunción <button type="button" class="info-icon" data-info="pdvGranAsuncion" aria-label="Información">i</button></label>
+                <input type="number" id="pdvGranAsuncion" name="pdvGranAsuncion" min="0" value="0">
+              </div>
+              <div class="form-field">
+                <label for="pdvInterior">PDV en Interior <button type="button" class="info-icon" data-info="pdvInterior" aria-label="Información">i</button></label>
+                <input type="number" id="pdvInterior" name="pdvInterior" min="0" value="0">
+              </div>
+            </div>
+            <p class="muted small-note">La suma de estos 3 campos debe ser igual a la "Cantidad de puntos de venta (PDV)" indicada arriba.</p>
+          </div>
+
+          <div class="form-field">
+            <label for="auditorsMode">Cantidad de auditores <button type="button" class="info-icon" data-info="auditorsMode" aria-label="Información">i</button></label>
+            <select id="auditorsMode" name="auditorsMode">
+              <option value="auto">Automático (según cantidad de PDV)</option>
+              <option value="manual">Manual</option>
+            </select>
+          </div>
+
+          <div class="form-field" id="auditorsCountWrapper" style="display:none;">
+            <label for="auditorsCount">Cantidad de auditores (manual) <button type="button" class="info-icon" data-info="auditorsCount" aria-label="Información">i</button></label>
+            <input type="number" id="auditorsCount" name="auditorsCount" min="1">
+          </div>
+
+          <div class="form-field">
+            <label for="plazoDeseadoDiasCiclo">Plazo para completar cada ciclo (días hábiles) <button type="button" class="info-icon" data-info="plazoDeseadoDiasCiclo" aria-label="Información">i</button></label>
+            <input type="number" id="plazoDeseadoDiasCiclo" name="plazoDeseadoDiasCiclo" min="1" value="5">
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section" id="fieldsetMysteryShopper" style="display:none;">
+          <legend>Alcance del servicio — Mystery Shopper</legend>
+
+          <div class="form-field">
+            <label for="msAseguradorasCount">Empresas a monitorear (competencia) <button type="button" class="info-icon" data-info="msAseguradorasCount" aria-label="Información">i</button></label>
+            <input type="number" id="msAseguradorasCount" name="msAseguradorasCount" min="0" value="1">
+          </div>
+
+          <div class="form-field">
+            <label for="msSucursalesPresencial">Sucursales a visitar (presencial, Asunción) <button type="button" class="info-icon" data-info="msSucursalesPresencial" aria-label="Información">i</button></label>
+            <input type="number" id="msSucursalesPresencial" name="msSucursalesPresencial" min="0" value="0">
+          </div>
+
+          <div class="form-field">
+            <label for="msCanalesRemotos">Canales remotos por empresa <button type="button" class="info-icon" data-info="msCanalesRemotos" aria-label="Información">i</button></label>
+            <input type="number" id="msCanalesRemotos" name="msCanalesRemotos" min="0" value="3">
+          </div>
+
+          <div class="form-field">
+            <label for="msRondas">Rondas de relevamiento <button type="button" class="info-icon" data-info="msRondas" aria-label="Información">i</button></label>
+            <input type="number" id="msRondas" name="msRondas" min="1" value="1">
+          </div>
+
+          <div class="form-field">
+            <label for="msPlazoDeseadoDias">Plazo deseado (días hábiles) <button type="button" class="info-icon" data-info="msPlazoDeseadoDias" aria-label="Información">i</button></label>
+            <input type="number" id="msPlazoDeseadoDias" name="msPlazoDeseadoDias" min="1" value="3">
+          </div>
+
+          <div class="form-field">
+            <label for="msProductosPorVisita">Productos o servicios a relevar por visita <button type="button" class="info-icon" data-info="msProductosPorVisita" aria-label="Información">i</button></label>
+            <input type="number" id="msProductosPorVisita" name="msProductosPorVisita" min="0" value="5">
+          </div>
+
+          <p class="muted small-note form-field-full">
+            Este servicio está calculado para operar en Asunción capital (trabajo de campo presencial), más el
+            monitoreo de canales remotos (WhatsApp, Redes Sociales, Web) de cada empresa, sin límite geográfico.
+            Sirve para monitorear cualquier tipo de negocio o competencia (bancos, retail, aseguradoras, restaurantes, etc.).
+          </p>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>Parámetros opcionales del proyecto</legend>
+          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
+            Aplica a cualquiera de los dos servicios. Actívelos solo si corresponden; cada uno suma su costo
+            configurado en "Configuración de costos".
+          </p>
+
+          <div class="form-field">
+            <label for="nivelComplejidad">Nivel de complejidad del relevamiento <button type="button" class="info-icon" data-info="nivelComplejidad" aria-label="Información">i</button></label>
+            <select id="nivelComplejidad" name="nivelComplejidad">
+              <option value="basico" selected>Básico</option>
+              <option value="medio">Medio</option>
+              <option value="alto">Alto</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label for="rondasCorreccionSolicitadas">Rondas de corrección del informe solicitadas <button type="button" class="info-icon" data-info="rondasCorreccionSolicitadas" aria-label="Información">i</button></label>
+            <input type="number" id="rondasCorreccionSolicitadas" name="rondasCorreccionSolicitadas" min="0" value="1">
+          </div>
+
+          <div class="form-field">
+            <label for="reunionesSolicitadas">Reuniones con el cliente solicitadas <button type="button" class="info-icon" data-info="reunionesSolicitadas" aria-label="Información">i</button></label>
+            <input type="number" id="reunionesSolicitadas" name="reunionesSolicitadas" min="0" value="1">
+          </div>
+
+          <div class="form-field form-field-full">
+            <div class="checkbox-grid">
+              <label class="checkbox-item"><input type="checkbox" name="requiresTrabajoNocturno"> Trabajo nocturno <button type="button" class="info-icon" data-info="requiresTrabajoNocturno" aria-label="Información">i</button></label>
+              <label class="checkbox-item"><input type="checkbox" name="requiresFinDeSemana"> Fin de semana / feriado <button type="button" class="info-icon" data-info="requiresFinDeSemana" aria-label="Información">i</button></label>
+              <label class="checkbox-item"><input type="checkbox" name="requiereCapacitacionInicial"> Capacitación inicial al equipo <button type="button" class="info-icon" data-info="requiereCapacitacionInicial" aria-label="Información">i</button></label>
+              <label class="checkbox-item"><input type="checkbox" name="requiereSupervisionCampo"> Supervisión en campo <button type="button" class="info-icon" data-info="requiereSupervisionCampo" aria-label="Información">i</button></label>
+              <label class="checkbox-item"><input type="checkbox" name="esUrgente"> Proyecto urgente <button type="button" class="info-icon" data-info="esUrgente" aria-label="Información">i</button></label>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section" id="fieldsetServiciosAdicionales">
+          <legend>Servicios adicionales</legend>
+          <div class="checkbox-grid">
+            <label class="checkbox-item"><input type="checkbox" name="requiresTraslado"> Requiere traslado <button type="button" class="info-icon" data-info="requiresTraslado" aria-label="Información">i</button></label>
+            <label class="checkbox-item"><input type="checkbox" name="requiresAlojamiento"> Requiere alojamiento <button type="button" class="info-icon" data-info="requiresAlojamiento" aria-label="Información">i</button></label>
+            <label class="checkbox-item"><input type="checkbox" name="requiresViaticos"> Requiere viáticos <button type="button" class="info-icon" data-info="requiresViaticos" aria-label="Información">i</button></label>
+            <label class="checkbox-item"><input type="checkbox" name="requiresFotografia"> Evidencia fotográfica <button type="button" class="info-icon" data-info="requiresFotografia" aria-label="Información">i</button></label>
+            <label class="checkbox-item"><input type="checkbox" name="requiresInforme"> Informe final <button type="button" class="info-icon" data-info="requiresInforme" aria-label="Información">i</button></label>
+            <label class="checkbox-item"><input type="checkbox" name="requiresDashboard"> Dashboard de resultados <button type="button" class="info-icon" data-info="requiresDashboard" aria-label="Información">i</button></label>
+            <label class="checkbox-item"><input type="checkbox" name="requiresPresentacion"> Presentación de resultados <button type="button" class="info-icon" data-info="requiresPresentacion" aria-label="Información">i</button></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section">
           <legend>Ajustes comerciales</legend>
-          <div class="grid-2">
-            <div class="field">
-              <label for="descuentoPct">Descuento (%)</label>
-              <input type="number" id="descuentoPct" min="0" value="0" step="0.5">
-              <small class="hint" id="descuentoHint"></small>
-            </div>
-            <div class="field">
-              <label for="costoAdicionalManual">Costo adicional manual (Gs.)</label>
-              <input type="number" id="costoAdicionalManual" min="0" value="0" step="1000">
-            </div>
+
+          <div class="form-field">
+            <label for="discountPercent">Descuento (%) <button type="button" class="info-icon" data-info="discountPercent" aria-label="Información">i</button></label>
+            <input type="number" id="discountPercent" name="discountPercent" min="0" step="0.5" value="0">
           </div>
-          <div class="field">
-            <label for="motivoCostoAdicional">Motivo del costo adicional</label>
-            <input type="text" id="motivoCostoAdicional" placeholder="Ej: Material POP especial solicitado por el cliente">
+
+          <div class="form-field">
+            <label for="extraCostManual">Costo adicional manual (Gs.) <button type="button" class="info-icon" data-info="extraCostManual" aria-label="Información">i</button></label>
+            <input type="text" id="extraCostManual" name="extraCostManual" inputmode="numeric" value="0">
+          </div>
+
+          <div class="form-field form-field-full">
+            <label for="extraCostReason">Motivo del costo adicional <button type="button" class="info-icon" data-info="extraCostReason" aria-label="Información">i</button></label>
+            <input type="text" id="extraCostReason" name="extraCostReason" placeholder="Ej: Requerimiento especial del cliente">
           </div>
         </fieldset>
 
-        <div class="form-actions">
-          <button type="button" class="btn btn-primary" id="btnCalcular">Calcular cotización</button>
-          <span class="form-error" id="formError"></span>
+        <div class="button-row">
+          <button type="button" class="btn btn-secondary" id="btnLimpiarForm">Limpiar formulario</button>
+          <button type="submit" class="btn btn-primary">Calcular cotización</button>
         </div>
       </form>
 
-      <!-- ---------- RESULTADO ---------- -->
-      <section class="result" id="resultBox" hidden>
-
-        <div class="result-total-card">
-          <div>
-            <span class="label">Total estimado</span>
-            <div class="total-value" id="totalValue">Gs. 0</div>
-            <span class="quote-code" id="resultQuoteCode">COT-2026-001</span>
-          </div>
-          <div class="result-mini-stats">
-            <div><span id="statPromedioPDV">Gs. 0</span><small>Promedio por PDV</small></div>
-            <div><span id="statPromedioVisita">Gs. 0</span><small>Promedio por visita</small></div>
-          </div>
-        </div>
-
-        <div id="personalizadaWarning" class="alert alert-warning" hidden>
-          Este servicio requiere una cotización personalizada. El cálculo mostrado es orientativo y debe ser revisado comercialmente.
-        </div>
-
-        <div class="grid-2">
-          <div class="card">
-            <h3>Resumen del servicio</h3>
-            <table class="summary-table" id="summaryTable"></table>
-          </div>
-          <div class="card">
-            <h3>Desglose del cálculo (uso interno)</h3>
-            <table class="summary-table" id="breakdownTable"></table>
-          </div>
-        </div>
-
-        <div class="alert alert-note">
-          Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo, ubicación de los puntos de venta y requerimientos adicionales del cliente.
-        </div>
-
-        <div class="result-actions">
-          <button class="btn btn-ghost" id="btnPreview">Vista previa</button>
-          <button class="btn btn-ghost" id="btnImprimir">Imprimir</button>
-          <button class="btn btn-secondary" id="btnPdfCliente">Descargar PDF (cliente)</button>
-          <button class="btn btn-secondary" id="btnPdfInterno">Descargar PDF (interno)</button>
-          <button class="btn btn-primary" id="btnGuardar">Guardar en historial</button>
-        </div>
-      </section>
+      <div id="resultadoWrapper"></div>
     </section>
 
-    <!-- ---------- VISTA: HISTORIAL ---------- -->
-    <section class="view" id="view-historial">
-      <header class="view-header">
-        <div>
-          <h1>Historial de cotizaciones</h1>
-          <p class="subtitle">Buscá, filtrá y gestioná las cotizaciones guardadas.</p>
-        </div>
-      </header>
-
-      <div class="card filters-card">
-        <div class="filters-grid">
-          <div class="field">
-            <label for="fBuscar">Buscar por cliente o número</label>
-            <input type="text" id="fBuscar" placeholder="Ej: Don Luis o COT-2026-001">
-          </div>
-          <div class="field">
-            <label for="fZona">Zona</label>
-            <select id="fZona">
-              <option value="">Todas</option>
-              <option value="asuncion">Asunción</option>
-              <option value="gran_asuncion">Gran Asunción</option>
-              <option value="interior">Interior</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="fEstado">Estado</label>
-            <select id="fEstado">
-              <option value="">Todos</option>
-              <option value="Borrador">Borrador</option>
-              <option value="Enviada">Enviada</option>
-              <option value="Aprobada">Aprobada</option>
-              <option value="Rechazada">Rechazada</option>
-              <option value="Vencida">Vencida</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="fDesde">Desde</label>
-            <input type="date" id="fDesde">
-          </div>
-          <div class="field">
-            <label for="fHasta">Hasta</label>
-            <input type="date" id="fHasta">
-          </div>
-        </div>
+    <!-- ============ VISTA: CÁLCULO RÁPIDO ============ -->
+    <section id="view-rapido" class="view">
+      <div class="view-header">
+        <h1>Cálculo rápido</h1>
+        <p class="muted">Datos mínimos para estimar un precio en el momento, ideal durante una reunión con el cliente.</p>
       </div>
 
-      <div class="table-wrap card">
-        <table class="data-table" id="historialTable">
+      <div class="card">
+        <form id="formRapido" class="form-grid" autocomplete="off" onsubmit="return false;">
+          <fieldset class="form-section" style="border-top:none;padding-top:0;">
+            <legend>Datos mínimos</legend>
+
+            <div class="form-field">
+              <label for="rapidoCliente">Cliente (opcional) <button type="button" class="info-icon" data-info="rapidoCliente" aria-label="Información">i</button></label>
+              <input type="text" id="rapidoCliente" placeholder="Nombre del cliente">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoServiceType">Tipo de servicio <button type="button" class="info-icon" data-info="rapidoServiceType" aria-label="Información">i</button></label>
+              <select id="rapidoServiceType">
+                <option value="auditoria">Auditoría en punto de venta</option>
+                <option value="mysteryShopper">Mystery Shopper</option>
+              </select>
+            </div>
+          </fieldset>
+
+          <fieldset class="form-section" id="rapidoFieldsetAuditoria">
+            <legend>Alcance — Auditoría en PDV</legend>
+
+            <div class="form-field">
+              <label for="rapidoPdvCount">Cantidad de PDV * <button type="button" class="info-icon" data-info="rapidoPdvCount" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoPdvCount" min="1">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoProductsPerPdv">Productos por PDV <button type="button" class="info-icon" data-info="rapidoProductsPerPdv" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoProductsPerPdv" min="0" value="0">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoZone">Zona <button type="button" class="info-icon" data-info="rapidoZone" aria-label="Información">i</button></label>
+              <select id="rapidoZone">
+                <option value="asuncion">Asunción</option>
+                <option value="granAsuncion">Gran Asunción</option>
+                <option value="interior">Interior</option>
+                <option value="combinada">Combinada (las 3 zonas)</option>
+              </select>
+            </div>
+
+            <div class="form-field" id="rapidoDepartmentWrapper" style="display:none;">
+              <label for="rapidoDepartment">Departamento o ciudad <button type="button" class="info-icon" data-info="rapidoDepartment" aria-label="Información">i</button></label>
+              <input type="text" id="rapidoDepartment" placeholder="Ej: Encarnación">
+            </div>
+
+            <div class="form-field form-field-full" id="rapidoZoneSplitWrapper" style="display:none;">
+              <label style="margin-bottom:8px;">Reparto de PDV por zona</label>
+              <div class="checkbox-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+                <div class="form-field">
+                  <label for="rapidoPdvAsuncion">PDV en Asunción <button type="button" class="info-icon" data-info="rapidoPdvAsuncion" aria-label="Información">i</button></label>
+                  <input type="number" id="rapidoPdvAsuncion" min="0" value="0">
+                </div>
+                <div class="form-field">
+                  <label for="rapidoPdvGranAsuncion">PDV en Gran Asunción <button type="button" class="info-icon" data-info="rapidoPdvGranAsuncion" aria-label="Información">i</button></label>
+                  <input type="number" id="rapidoPdvGranAsuncion" min="0" value="0">
+                </div>
+                <div class="form-field">
+                  <label for="rapidoPdvInterior">PDV en Interior <button type="button" class="info-icon" data-info="rapidoPdvInterior" aria-label="Información">i</button></label>
+                  <input type="number" id="rapidoPdvInterior" min="0" value="0">
+                </div>
+              </div>
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoVisitsPerPdv">Visitas por PDV <button type="button" class="info-icon" data-info="rapidoVisitsPerPdv" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoVisitsPerPdv" min="1" value="1">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoFrequency">Frecuencia <button type="button" class="info-icon" data-info="rapidoFrequency" aria-label="Información">i</button></label>
+              <select id="rapidoFrequency">
+                <option value="unica" selected>Única</option>
+                <option value="semanal">Semanal</option>
+                <option value="quincenal">Quincenal</option>
+                <option value="mensual">Mensual</option>
+              </select>
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoDurationMonths">Duración (meses) <button type="button" class="info-icon" data-info="rapidoDurationMonths" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoDurationMonths" min="1" value="1">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoPlazoDeseadoDiasCiclo">Plazo deseado (días hábiles) <button type="button" class="info-icon" data-info="rapidoPlazoDeseadoDiasCiclo" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoPlazoDeseadoDiasCiclo" min="1" value="5">
+            </div>
+          </fieldset>
+
+          <fieldset class="form-section" id="rapidoFieldsetMysteryShopper" style="display:none;">
+            <legend>Alcance — Mystery Shopper</legend>
+
+            <div class="form-field">
+              <label for="rapidoMsAseguradorasCount">Empresas a monitorear <button type="button" class="info-icon" data-info="rapidoMsAseguradorasCount" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoMsAseguradorasCount" min="0" value="1">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoMsSucursalesPresencial">Sucursales a visitar (presencial) <button type="button" class="info-icon" data-info="rapidoMsSucursalesPresencial" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoMsSucursalesPresencial" min="0" value="0">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoMsProductosPorVisita">Productos/servicios por visita <button type="button" class="info-icon" data-info="rapidoMsProductosPorVisita" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoMsProductosPorVisita" min="0" value="5">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoMsCanalesRemotos">Canales remotos por empresa <button type="button" class="info-icon" data-info="rapidoMsCanalesRemotos" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoMsCanalesRemotos" min="0" value="3">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoMsRondas">Rondas de relevamiento <button type="button" class="info-icon" data-info="rapidoMsRondas" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoMsRondas" min="1" value="1">
+            </div>
+
+            <div class="form-field">
+              <label for="rapidoMsPlazoDeseadoDias">Plazo deseado (días hábiles) <button type="button" class="info-icon" data-info="rapidoMsPlazoDeseadoDias" aria-label="Información">i</button></label>
+              <input type="number" id="rapidoMsPlazoDeseadoDias" min="1" value="3">
+            </div>
+          </fieldset>
+
+          <div class="button-row">
+            <button type="button" class="btn btn-secondary" id="btnLimpiarRapido">Limpiar</button>
+            <button type="button" class="btn btn-primary" id="btnCalcularRapido">Calcular</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="resultadoRapidoWrapper"></div>
+    </section>
+
+    <!-- ============ VISTA: HISTORIAL ============ -->
+    <section id="view-historial" class="view">
+      <div class="view-header">
+        <h1>Historial de cotizaciones</h1>
+        <p class="muted">Consulte, edite y gestione todas las cotizaciones guardadas.</p>
+      </div>
+
+      <div class="card filters-bar">
+        <input type="text" id="buscadorHistorial" placeholder="Buscar por cliente o número de cotización...">
+        <select id="filtroEstado">
+          <option value="">Todos los estados</option>
+          <option value="Borrador">Borrador</option>
+          <option value="Enviada">Enviada</option>
+          <option value="Aprobada">Aprobada</option>
+          <option value="Rechazada">Rechazada</option>
+          <option value="Vencida">Vencida</option>
+        </select>
+        <select id="filtroZona">
+          <option value="">Todas las zonas</option>
+          <option value="asuncion">Asunción</option>
+          <option value="granAsuncion">Gran Asunción</option>
+          <option value="interior">Interior</option>
+        </select>
+        <label class="filter-date-label">Desde <input type="date" id="filtroFechaDesde"></label>
+        <label class="filter-date-label">Hasta <input type="date" id="filtroFechaHasta"></label>
+      </div>
+
+      <div class="card table-wrapper">
+        <table class="data-table">
           <thead>
             <tr>
               <th>N° Cotización</th>
               <th>Cliente</th>
-              <th>Fecha</th>
               <th>Servicio</th>
-              <th>PDV</th>
+              <th>Fecha</th>
+              <th>Alcance</th>
               <th>Zona</th>
               <th>Total estimado</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
           </thead>
-          <tbody id="historialBody"></tbody>
+          <tbody id="tablaHistorialBody"></tbody>
         </table>
-        <p class="empty-state" id="historialEmpty" hidden>Todavía no hay cotizaciones guardadas.</p>
       </div>
     </section>
 
-    <!-- ---------- VISTA: CONFIGURACIÓN ---------- -->
-    <section class="view" id="view-config">
-      <header class="view-header">
-        <div>
-          <h1>Configuración de costos</h1>
-          <p class="subtitle">Estos valores alimentan todas las fórmulas del cotizador. Modificalos según tus tarifas reales.</p>
-        </div>
-        <div class="header-actions">
-          <button class="btn btn-ghost" id="btnExportConfig" title="Exporta las tarifas de todos los tipos de servicio">Exportar configuración</button>
-          <label class="btn btn-ghost file-btn" title="Importa las tarifas de todos los tipos de servicio">
-            Importar configuración
-            <input type="file" id="inputImportConfig" accept="application/json" hidden>
-          </label>
-          <button class="btn btn-danger-outline" id="btnRestaurarConfig" title="Restaura solo el tipo de servicio seleccionado arriba">Restaurar valores de ejemplo</button>
-        </div>
-      </header>
-
-      <div class="alert alert-note">
-        Los valores marcados como <strong>VALORES DE EJEMPLO</strong> son solo para demostración. Reemplazalos por tus tarifas comerciales reales antes de cotizar a un cliente.
+    <!-- ============ VISTA: CONFIGURACIÓN ============ -->
+    <section id="view-config" class="view">
+      <div class="view-header">
+        <h1>Configuración de costos</h1>
+        <p class="muted">Todos los valores aquí son <strong>VALORES DE EJEMPLO</strong>. Edítelos según sus tarifas reales.</p>
       </div>
 
-      <div class="card">
-        <div class="field" style="max-width:420px; margin-bottom:0;">
-          <label for="configTipoServicio">Tipo de servicio a configurar</label>
-          <!-- Cada tipo de servicio tiene su propio set de tarifas, escalas y
-               recargos, totalmente independiente del resto. Las opciones se
-               generan desde app.js (constante SERVICE_TYPES). -->
-          <select id="configTipoServicio"></select>
-          <small class="hint">Los cambios que hagas abajo aplican solamente al tipo de servicio seleccionado acá.</small>
-        </div>
-      </div>
-
-      <!-- ESCALAS -->
+      <details class="service-accordion" open>
+        <summary>🔍 Auditoría en punto de venta</summary>
+        <div class="service-accordion-body">
       <div class="card">
         <div class="card-header-row">
-          <h3 id="escalasTituloTipo">Escalas de precio por cantidad de PDV <span class="tag-example">VALORES DE EJEMPLO</span></h3>
-          <button type="button" class="btn btn-primary btn-sm" id="btnAgregarEscala">+ Agregar escala</button>
+          <h2>Escalas de precio según cantidad de PDV</h2>
+          <button class="btn btn-primary btn-small" id="btnAgregarEscala">+ Agregar escala</button>
         </div>
-
-        <div class="field" style="max-width:360px;">
-          <label for="modalidadPrecio">Modalidad de cálculo entre escalas</label>
-          <select id="modalidadPrecio">
-            <option value="cerrado">Precio cerrado por escala</option>
-            <option value="progresivo">Precio progresivo (interpolado)</option>
-          </select>
-        </div>
-
-        <div class="table-wrap">
-          <table class="data-table" id="escalasTable">
+        <div id="escalasAlertBox" style="display:none;"></div>
+        <div class="table-wrapper">
+          <table class="data-table">
             <thead>
               <tr>
-                <th>PDV mínimo</th>
-                <th>PDV máximo</th>
-                <th>Precio base (Gs.)</th>
+                <th>PDV mínimo <button type="button" class="info-icon" data-info="escalaMin" aria-label="Información">i</button></th>
+                <th>PDV máximo <button type="button" class="info-icon" data-info="escalaMax" aria-label="Información">i</button></th>
+                <th>Productos incluidos <button type="button" class="info-icon" data-info="escalaProductos" aria-label="Información">i</button></th>
+                <th>Precio mínimo (Gs.) <button type="button" class="info-icon" data-info="escalaPrecioMinimo" aria-label="Información">i</button></th>
+                <th>Precio recomendado (Gs.) <button type="button" class="info-icon" data-info="escalaPrecioRecomendado" aria-label="Información">i</button></th>
+                <th>Precio máximo (Gs.) <button type="button" class="info-icon" data-info="escalaPrecioMaximo" aria-label="Información">i</button></th>
                 <th>Acciones</th>
               </tr>
             </thead>
-            <tbody id="escalasBody"></tbody>
+            <tbody id="tablaEscalasBody"></tbody>
           </table>
         </div>
-        <p class="hint" id="escalasWarning"></p>
-      </div>
-
-      <!-- PUNTOS DE EVALUACIÓN (checklist) -->
-      <div class="card">
-        <div class="card-header-row">
-          <h3 id="puntosTituloTipo">Puntos de evaluación a medir <span class="tag-example">VALORES DE EJEMPLO</span></h3>
-          <button type="button" class="btn btn-primary btn-sm" id="btnAgregarPunto">+ Agregar punto</button>
-        </div>
-        <p class="hint">
-          Si este tipo de servicio tiene puntos definidos acá, en "Nueva cotización" aparecerán como checklist
-          (por ejemplo, para Mystery Shopper: atención al cliente, tiempo de espera, limpieza, etc.) en lugar del
-          campo numérico de productos. Dejá la lista vacía para usar el campo numérico manual, como en Auditoría PDV.
+        <p class="muted small-note">
+          Si la cantidad de PDV solicitada supera la escala máxima configurada, el sistema mostrará
+          "cotización personalizada" y calculará un valor orientativo.
         </p>
-        <div class="table-wrap">
-          <table class="data-table" id="puntosTable">
-            <thead>
-              <tr>
-                <th>Punto / criterio a evaluar</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody id="puntosBody"></tbody>
-          </table>
+      </div>
         </div>
-        <p class="empty-state" id="puntosEmpty" hidden>No hay puntos configurados para este tipo de servicio. Se usará el campo numérico manual en el formulario.</p>
-      </div>
+      </details>
 
-      <!-- PARÁMETROS GENERALES -->
-      <div class="grid-2">
-        <fieldset class="card">
-          <legend>Productos y volumen</legend>
-          <div class="field">
-            <label for="cfgProductosIncluidos">Productos incluidos en el precio base (por PDV)</label>
-            <input type="number" id="cfgProductosIncluidos" min="0">
-          </div>
-          <div class="field">
-            <label for="cfgRecargoProducto">Recargo por producto adicional (Gs. por producto, por PDV)</label>
-            <input type="number" id="cfgRecargoProducto" min="0">
-          </div>
-          <div class="field">
-            <label for="cfgPdvPorAuditor">PDV cubiertos por auditor, por ronda (para cálculo automático)</label>
-            <input type="number" id="cfgPdvPorAuditor" min="1">
-          </div>
-          <div class="field">
-            <label for="cfgCostoVisitaAdicional">Costo por visita adicional (Gs. por PDV, por visita extra)</label>
-            <input type="number" id="cfgCostoVisitaAdicional" min="0">
+      <form id="formConfigGeneral" class="card form-grid">
+
+        <details class="service-accordion form-field-full" open>
+          <summary>🔍 Parámetros — Auditoría en punto de venta</summary>
+          <div class="service-accordion-body form-grid">
+        <fieldset class="form-section">
+          <legend>Modalidad de cálculo</legend>
+          <div class="form-field">
+            <label for="pricingMode">Modo de precio entre escalas <button type="button" class="info-icon" data-info="pricingMode" aria-label="Información">i</button></label>
+            <select id="pricingMode" name="pricingMode">
+              <option value="cerrado">Precio cerrado por escala</option>
+              <option value="progresivo">Precio progresivo (interpolado)</option>
+            </select>
           </div>
         </fieldset>
 
-        <fieldset class="card">
-          <legend>Zona y traslado</legend>
-          <div class="field">
-            <label for="cfgRecargoGranAsuncion">Recargo Gran Asunción (%)</label>
-            <input type="number" id="cfgRecargoGranAsuncion" min="0" step="0.1">
-          </div>
-          <div class="field">
-            <label for="cfgRecargoInterior">Recargo Interior (%)</label>
-            <input type="number" id="cfgRecargoInterior" min="0" step="0.1">
-          </div>
-          <div class="field">
-            <label for="cfgCostoTraslado">Costo de traslado por auditor, por ronda (Gs.)</label>
-            <input type="number" id="cfgCostoTraslado" min="0">
+        <fieldset class="form-section">
+          <legend>Productos</legend>
+          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
+            La cantidad de productos incluidos ahora se define por cada escala de PDV
+            (ver tabla "Escalas de precio" más arriba). Aquí solo se configura el recargo
+            por producto adicional.
+          </p>
+          <div class="form-field">
+            <label for="extraProductSurcharge">Recargo por producto adicional (Gs.) <button type="button" class="info-icon" data-info="extraProductSurcharge" aria-label="Información">i</button></label>
+            <input type="text" id="extraProductSurcharge" name="extraProductSurcharge" inputmode="numeric">
           </div>
         </fieldset>
 
-        <fieldset class="card">
-          <legend>Viáticos y alojamiento</legend>
-          <div class="field">
-            <label for="cfgViaticoDia">Viático por auditor, por día (Gs.)</label>
-            <input type="number" id="cfgViaticoDia" min="0">
+        <fieldset class="form-section">
+          <legend>Zona</legend>
+          <div class="form-field">
+            <label for="surchargeGranAsuncionPercent">Recargo Gran Asunción (%) <button type="button" class="info-icon" data-info="surchargeGranAsuncionPercent" aria-label="Información">i</button></label>
+            <input type="number" id="surchargeGranAsuncionPercent" name="surchargeGranAsuncionPercent" min="0" step="0.5">
           </div>
-          <div class="field">
-            <label for="cfgAlojamientoNoche">Alojamiento por auditor, por noche (Gs.)</label>
-            <input type="number" id="cfgAlojamientoNoche" min="0">
-          </div>
-        </fieldset>
-
-        <fieldset class="card">
-          <legend>Entregables</legend>
-          <div class="field">
-            <label for="cfgEvidenciaFotografica">Evidencia fotográfica (Gs. por PDV, por ronda)</label>
-            <input type="number" id="cfgEvidenciaFotografica" min="0">
-          </div>
-          <div class="field">
-            <label for="cfgInformeFinal">Informe final (Gs., costo único)</label>
-            <input type="number" id="cfgInformeFinal" min="0">
-          </div>
-          <div class="field">
-            <label for="cfgDashboard">Dashboard de resultados (Gs., costo único)</label>
-            <input type="number" id="cfgDashboard" min="0">
-          </div>
-          <div class="field">
-            <label for="cfgPresentacion">Presentación de resultados (Gs., costo único)</label>
-            <input type="number" id="cfgPresentacion" min="0">
+          <div class="form-field">
+            <label for="surchargeInteriorPercent">Recargo Interior (%) <button type="button" class="info-icon" data-info="surchargeInteriorPercent" aria-label="Información">i</button></label>
+            <input type="number" id="surchargeInteriorPercent" name="surchargeInteriorPercent" min="0" step="0.5">
           </div>
         </fieldset>
 
-        <fieldset class="card">
-          <legend>Comercial e impuestos</legend>
-          <div class="field">
-            <label for="cfgMargen">Margen comercial (%)</label>
-            <input type="number" id="cfgMargen" min="0" step="0.1">
+        <fieldset class="form-section">
+          <legend>Auditores y operación</legend>
+          <div class="form-field">
+            <label for="pdvPerAuditor">PDV cubiertos por auditor (modo automático) <button type="button" class="info-icon" data-info="pdvPerAuditor" aria-label="Información">i</button></label>
+            <input type="number" id="pdvPerAuditor" name="pdvPerAuditor" min="1">
           </div>
-          <div class="field">
-            <label for="cfgIva">IVA (%)</label>
-            <input type="number" id="cfgIva" min="0" step="0.1">
+          <div class="form-field">
+            <label for="costoTraslado">Costo de traslado (Gs. por auditor, por viaje) <button type="button" class="info-icon" data-info="costoTraslado" aria-label="Información">i</button></label>
+            <input type="text" id="costoTraslado" name="costoTraslado" inputmode="numeric">
           </div>
-          <div class="field">
-            <label for="cfgDescuentoMax">Descuento máximo permitido (%)</label>
-            <input type="number" id="cfgDescuentoMax" min="0" step="0.1">
+          <div class="form-field">
+            <label for="viaticoPorAuditorPorDia">Viático por auditor, por día (Gs.) <button type="button" class="info-icon" data-info="viaticoPorAuditorPorDia" aria-label="Información">i</button></label>
+            <input type="text" id="viaticoPorAuditorPorDia" name="viaticoPorAuditorPorDia" inputmode="numeric">
           </div>
-          <div class="field">
-            <label for="cfgMoneda">Moneda principal</label>
-            <input type="text" id="cfgMoneda" value="PYG" disabled>
-            <small class="hint">Guaraníes (Gs.) — moneda fija de esta versión.</small>
+          <div class="form-field">
+            <label for="alojamientoPorAuditorPorNoche">Alojamiento por auditor, por noche (Gs.) <button type="button" class="info-icon" data-info="alojamientoPorAuditorPorNoche" aria-label="Información">i</button></label>
+            <input type="text" id="alojamientoPorAuditorPorNoche" name="alojamientoPorAuditorPorNoche" inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="costoVisitaAdicional">Costo por visita adicional (Gs. por PDV) <button type="button" class="info-icon" data-info="costoVisitaAdicional" aria-label="Información">i</button></label>
+            <input type="text" id="costoVisitaAdicional" name="costoVisitaAdicional" inputmode="numeric">
           </div>
         </fieldset>
-      </div>
 
-      <div class="form-actions">
-        <button class="btn btn-primary" id="btnGuardarConfig">Guardar configuración</button>
-        <span class="form-error" id="configSavedMsg"></span>
+        <fieldset class="form-section">
+          <legend>Servicios adicionales (cargo único)</legend>
+          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
+            Para Informe, Dashboard y Presentación, elija cómo se costean: precio fijo, según las horas
+            reales de la tarea de oficina correspondiente, o ambos combinados. En modo "horas" o "fijo +
+            horas", el sistema usa automáticamente el perfil y las horas configurados en "Tareas internas",
+            sin sumarlos dos veces.
+          </p>
+          <div class="form-field">
+            <label for="costoEvidenciaFotografica">Evidencia fotográfica (Gs.) <button type="button" class="info-icon" data-info="costoEvidenciaFotografica" aria-label="Información">i</button></label>
+            <input type="text" id="costoEvidenciaFotografica" name="costoEvidenciaFotografica" inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="costoInformeFinal">Informe final — precio fijo (Gs.) <button type="button" class="info-icon" data-info="costoInformeFinal" aria-label="Información">i</button></label>
+            <input type="text" id="costoInformeFinal" name="costoInformeFinal" inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="modoCosteoInforme">Modo de costeo — Informe final <button type="button" class="info-icon" data-info="modoCosteoInforme" aria-label="Información">i</button></label>
+            <select id="modoCosteoInforme" name="modoCosteoInforme">
+              <option value="fijo">Precio fijo</option>
+              <option value="horas">Según horas hombre</option>
+              <option value="fijo_mas_horas">Precio fijo + horas hombre</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="costoDashboard">Dashboard — precio fijo (Gs.) <button type="button" class="info-icon" data-info="costoDashboard" aria-label="Información">i</button></label>
+            <input type="text" id="costoDashboard" name="costoDashboard" inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="modoCosteoDashboard">Modo de costeo — Dashboard <button type="button" class="info-icon" data-info="modoCosteoDashboard" aria-label="Información">i</button></label>
+            <select id="modoCosteoDashboard" name="modoCosteoDashboard">
+              <option value="fijo">Precio fijo</option>
+              <option value="horas">Según horas hombre</option>
+              <option value="fijo_mas_horas">Precio fijo + horas hombre</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="costoPresentacion">Presentación de resultados — precio fijo (Gs.) <button type="button" class="info-icon" data-info="costoPresentacion" aria-label="Información">i</button></label>
+            <input type="text" id="costoPresentacion" name="costoPresentacion" inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="modoCosteoPresentacion">Modo de costeo — Presentación <button type="button" class="info-icon" data-info="modoCosteoPresentacion" aria-label="Información">i</button></label>
+            <select id="modoCosteoPresentacion" name="modoCosteoPresentacion">
+              <option value="fijo">Precio fijo</option>
+              <option value="horas">Según horas hombre</option>
+              <option value="fijo_mas_horas">Precio fijo + horas hombre</option>
+            </select>
+          </div>
+        </fieldset>
+
+
+        <fieldset class="form-section">
+          <legend>Tiempos de relevamiento — Auditoría en PDV</legend>
+          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
+            Con estos tiempos el sistema calcula con precisión las horas de campo, en vez de
+            estimar una única "hora por visita". Todos los valores están en minutos, salvo la jornada.
+          </p>
+          <div class="form-field">
+            <label for="auditPrepMinutos">Preparación por PDV (minutos) <button type="button" class="info-icon" data-info="auditPrepMinutos" aria-label="Información">i</button></label>
+            <input type="number" id="auditPrepMinutos" name="auditPrepMinutos" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="auditMinutosPorProducto">Relevamiento por producto (minutos) <button type="button" class="info-icon" data-info="auditMinutosPorProducto" aria-label="Información">i</button></label>
+            <input type="number" id="auditMinutosPorProducto" name="auditMinutosPorProducto" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="auditMinutosEvidenciaPorProducto">Evidencia/foto por producto (minutos) <button type="button" class="info-icon" data-info="auditMinutosEvidenciaPorProducto" aria-label="Información">i</button></label>
+            <input type="number" id="auditMinutosEvidenciaPorProducto" name="auditMinutosEvidenciaPorProducto" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="auditMinutosCierreFormulario">Cierre del formulario (minutos) <button type="button" class="info-icon" data-info="auditMinutosCierreFormulario" aria-label="Información">i</button></label>
+            <input type="number" id="auditMinutosCierreFormulario" name="auditMinutosCierreFormulario" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="auditMinutosEsperaPromedio">Espera promedio dentro del PDV (minutos) <button type="button" class="info-icon" data-info="auditMinutosEsperaPromedio" aria-label="Información">i</button></label>
+            <input type="number" id="auditMinutosEsperaPromedio" name="auditMinutosEsperaPromedio" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="auditMinutosTrasladoEntrePdv">Traslado entre un PDV y otro (minutos) <button type="button" class="info-icon" data-info="auditMinutosTrasladoEntrePdv" aria-label="Información">i</button></label>
+            <input type="number" id="auditMinutosTrasladoEntrePdv" name="auditMinutosTrasladoEntrePdv" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="auditJornadaEfectivaHoras">Jornada efectiva del relevador (horas/día) <button type="button" class="info-icon" data-info="auditJornadaEfectivaHoras" aria-label="Información">i</button></label>
+            <input type="number" id="auditJornadaEfectivaHoras" name="auditJornadaEfectivaHoras" min="0" step="0.5">
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>Mano de obra de campo — Relevadores</legend>
+          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
+            Estos valores permiten calcular el costo REAL de la hora trabajada por los relevadores,
+            incluyendo las cargas sociales obligatorias, y sumarlo automáticamente a cada cotización.
+          </p>
+          <div class="form-field">
+            <label for="costoPorHoraHombre">Costo base por hora del relevador (Gs., sin cargas) <button type="button" class="info-icon" data-info="costoPorHoraHombre" aria-label="Información">i</button></label>
+            <input type="text" id="costoPorHoraHombre" name="costoPorHoraHombre" inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="aguinaldoPercent">Aguinaldo (%) <button type="button" class="info-icon" data-info="aguinaldoPercent" aria-label="Información">i</button></label>
+            <input type="number" id="aguinaldoPercent" name="aguinaldoPercent" min="0" step="0.01">
+          </div>
+          <div class="form-field">
+            <label for="ipsPatronalPercent">IPS patronal (%) <button type="button" class="info-icon" data-info="ipsPatronalPercent" aria-label="Información">i</button></label>
+            <input type="number" id="ipsPatronalPercent" name="ipsPatronalPercent" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="otrosCostosLaboralesPercent">Otros costos laborales (%) <button type="button" class="info-icon" data-info="otrosCostosLaboralesPercent" aria-label="Información">i</button></label>
+            <input type="number" id="otrosCostosLaboralesPercent" name="otrosCostosLaboralesPercent" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="recargoNocturnoPercent">Recargo por trabajo nocturno (%) <button type="button" class="info-icon" data-info="recargoNocturnoPercent" aria-label="Información">i</button></label>
+            <input type="number" id="recargoNocturnoPercent" name="recargoNocturnoPercent" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="recargoFinDeSemanaPercent">Recargo por fin de semana / feriado (%) <button type="button" class="info-icon" data-info="recargoFinDeSemanaPercent" aria-label="Información">i</button></label>
+            <input type="number" id="recargoFinDeSemanaPercent" name="recargoFinDeSemanaPercent" min="0" step="1">
+          </div>
+        </fieldset>
+          </div>
+        </details>
+
+        <details class="service-accordion form-field-full">
+          <summary>🕵️ Parámetros — Mystery Shopper</summary>
+          <div class="service-accordion-body form-grid">
+        <fieldset class="form-section">
+          <legend>Tiempo del relevador — Mystery Shopper</legend>
+          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
+            Tiempos detallados de UNA visita presencial (Asunción capital), en minutos.
+          </p>
+          <div class="form-field">
+            <label for="msMinutosTraslado">Traslado por visita (minutos) <button type="button" class="info-icon" data-info="msMinutosTraslado" aria-label="Información">i</button></label>
+            <input type="number" id="msMinutosTraslado" name="msMinutosTraslado" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="msMinutosEspera">Espera dentro del comercio (minutos) <button type="button" class="info-icon" data-info="msMinutosEspera" aria-label="Información">i</button></label>
+            <input type="number" id="msMinutosEspera" name="msMinutosEspera" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="msMinutosInteraccion">Interacción con el asesor (minutos) <button type="button" class="info-icon" data-info="msMinutosInteraccion" aria-label="Información">i</button></label>
+            <input type="number" id="msMinutosInteraccion" name="msMinutosInteraccion" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="msMinutosPorProductoServicio">Relevamiento por producto/servicio (minutos) <button type="button" class="info-icon" data-info="msMinutosPorProductoServicio" aria-label="Información">i</button></label>
+            <input type="number" id="msMinutosPorProductoServicio" name="msMinutosPorProductoServicio" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="msMinutosCargaEvidencia">Carga de evidencias (minutos) <button type="button" class="info-icon" data-info="msMinutosCargaEvidencia" aria-label="Información">i</button></label>
+            <input type="number" id="msMinutosCargaEvidencia" name="msMinutosCargaEvidencia" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="msMinutosInformeVisita">Informe de la visita (minutos) <button type="button" class="info-icon" data-info="msMinutosInformeVisita" aria-label="Información">i</button></label>
+            <input type="number" id="msMinutosInformeVisita" name="msMinutosInformeVisita" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="msJornadaEfectivaHorasDia">Jornada efectiva del Mystery Shopper (horas/día) <button type="button" class="info-icon" data-info="msJornadaEfectivaHorasDia" aria-label="Información">i</button></label>
+            <input type="number" id="msJornadaEfectivaHorasDia" name="msJornadaEfectivaHorasDia" min="0" step="0.5">
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>Canales remotos — Mystery Shopper</legend>
+          <div class="form-field">
+            <label for="msMinutosGestionRemota">Tiempo de gestión por interacción remota (minutos) <button type="button" class="info-icon" data-info="msMinutosGestionRemota" aria-label="Información">i</button></label>
+            <input type="number" id="msMinutosGestionRemota" name="msMinutosGestionRemota" min="0" step="1">
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>Coordinación y análisis — Mystery Shopper</legend>
+          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
+            Tareas únicas del proyecto (no se repiten por visita ni por interacción).
+          </p>
+          <div class="form-field">
+            <label for="msHorasDisenoGuion">Horas de diseño de guion y briefing <button type="button" class="info-icon" data-info="msHorasDisenoGuion" aria-label="Información">i</button></label>
+            <input type="number" id="msHorasDisenoGuion" name="msHorasDisenoGuion" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="msHorasAnalisisInforme">Horas de análisis y armado de informe final <button type="button" class="info-icon" data-info="msHorasAnalisisInforme" aria-label="Información">i</button></label>
+            <input type="number" id="msHorasAnalisisInforme" name="msHorasAnalisisInforme" min="0" step="0.5">
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>Costos unitarios — Mystery Shopper</legend>
+          <div class="form-field">
+            <label for="msCostoHoraShopper">Costo hora — Mystery Shopper / relevador (Gs.) <button type="button" class="info-icon" data-info="msCostoHoraShopper" aria-label="Información">i</button></label>
+            <input type="text" id="msCostoHoraShopper" name="msCostoHoraShopper" inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="msCostoHoraAnalista">Costo hora — Analista / Coordinador (Gs.) <button type="button" class="info-icon" data-info="msCostoHoraAnalista" aria-label="Información">i</button></label>
+            <input type="text" id="msCostoHoraAnalista" name="msCostoHoraAnalista" inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="msViaticoPorVisita">Viático de movilidad por visita presencial (Gs.) <button type="button" class="info-icon" data-info="msViaticoPorVisita" aria-label="Información">i</button></label>
+            <input type="text" id="msViaticoPorVisita" name="msViaticoPorVisita" inputmode="numeric">
+          </div>
+        </fieldset>
+          </div>
+        </details>
+
+        <fieldset class="form-section">
+          <legend>Parámetros opcionales del proyecto (aplica a todos los servicios)</legend>
+          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
+            El nivel de complejidad, revisitas y ausencias son toggles/valores generales; el resto se activa
+            por cotización (ver "Nueva cotización").
+          </p>
+          <div class="form-field">
+            <label for="complejidadMediaPercent">Complejidad media (% de tiempo adicional) <button type="button" class="info-icon" data-info="complejidadMediaPercent" aria-label="Información">i</button></label>
+            <input type="number" id="complejidadMediaPercent" name="complejidadMediaPercent" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="complejidadAltaPercent">Complejidad alta (% de tiempo adicional) <button type="button" class="info-icon" data-info="complejidadAltaPercent" aria-label="Información">i</button></label>
+            <input type="number" id="complejidadAltaPercent" name="complejidadAltaPercent" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="capacitacionInicialHoras">Horas de capacitación inicial <button type="button" class="info-icon" data-info="capacitacionInicialHoras" aria-label="Información">i</button></label>
+            <input type="number" id="capacitacionInicialHoras" name="capacitacionInicialHoras" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="supervisionCampoHorasPorCiclo">Horas de supervisión en campo, por ciclo <button type="button" class="info-icon" data-info="supervisionCampoHorasPorCiclo" aria-label="Información">i</button></label>
+            <input type="number" id="supervisionCampoHorasPorCiclo" name="supervisionCampoHorasPorCiclo" min="0" step="0.5">
+          </div>
+          <div class="form-field" style="justify-content:flex-end;">
+            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarRevisitasPercent" name="aplicarRevisitasPercent"> Activar % de revisitas <button type="button" class="info-icon" data-info="aplicarRevisitasPercent" aria-label="Información">i</button></label>
+          </div>
+          <div class="form-field">
+            <label for="revisitasPercent">% de revisitas estimadas <button type="button" class="info-icon" data-info="revisitasPercent" aria-label="Información">i</button></label>
+            <input type="number" id="revisitasPercent" name="revisitasPercent" min="0" step="1">
+          </div>
+          <div class="form-field" style="justify-content:flex-end;">
+            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarAusenciasPercent" name="aplicarAusenciasPercent"> Activar % de ausencias/PDV cerrados <button type="button" class="info-icon" data-info="aplicarAusenciasPercent" aria-label="Información">i</button></label>
+          </div>
+          <div class="form-field">
+            <label for="ausenciasPercent">% de ausencias o PDV cerrados <button type="button" class="info-icon" data-info="ausenciasPercent" aria-label="Información">i</button></label>
+            <input type="number" id="ausenciasPercent" name="ausenciasPercent" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="correccionesRondasIncluidas">Rondas de corrección incluidas sin costo <button type="button" class="info-icon" data-info="correccionesRondasIncluidas" aria-label="Información">i</button></label>
+            <input type="number" id="correccionesRondasIncluidas" name="correccionesRondasIncluidas" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="horasPorRondaCorreccionExtra">Horas del analista, por ronda extra <button type="button" class="info-icon" data-info="horasPorRondaCorreccionExtra" aria-label="Información">i</button></label>
+            <input type="number" id="horasPorRondaCorreccionExtra" name="horasPorRondaCorreccionExtra" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="reunionesIncluidas">Reuniones incluidas sin costo <button type="button" class="info-icon" data-info="reunionesIncluidas" aria-label="Información">i</button></label>
+            <input type="number" id="reunionesIncluidas" name="reunionesIncluidas" min="0" step="1">
+          </div>
+          <div class="form-field">
+            <label for="horasPorReunionExtra">Horas del coordinador, por reunión extra <button type="button" class="info-icon" data-info="horasPorReunionExtra" aria-label="Información">i</button></label>
+            <input type="number" id="horasPorReunionExtra" name="horasPorReunionExtra" min="0" step="0.5">
+          </div>
+          <div class="form-field" style="justify-content:flex-end;">
+            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarGastoTelefonia" name="aplicarGastoTelefonia"> Activar gasto de telefonía/datos <button type="button" class="info-icon" data-info="aplicarGastoTelefonia" aria-label="Información">i</button></label>
+          </div>
+          <div class="form-field">
+            <label for="gastoTelefoniaPorRelevador">Gasto de telefonía, por relevador/shopper (Gs.) <button type="button" class="info-icon" data-info="gastoTelefoniaPorRelevador" aria-label="Información">i</button></label>
+            <input type="text" id="gastoTelefoniaPorRelevador" name="gastoTelefoniaPorRelevador" inputmode="numeric">
+          </div>
+          <div class="form-field" style="justify-content:flex-end;">
+            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarCostoHerramientas" name="aplicarCostoHerramientas"> Activar costo de herramientas/licencias <button type="button" class="info-icon" data-info="aplicarCostoHerramientas" aria-label="Información">i</button></label>
+          </div>
+          <div class="form-field">
+            <label for="costoHerramientasLicencias">Costo de herramientas/licencias (Gs., cargo único) <button type="button" class="info-icon" data-info="costoHerramientasLicencias" aria-label="Información">i</button></label>
+            <input type="text" id="costoHerramientasLicencias" name="costoHerramientasLicencias" inputmode="numeric">
+          </div>
+          <div class="form-field" style="justify-content:flex-end;">
+            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarOtrosGastosOperativos" name="aplicarOtrosGastosOperativos"> Activar otros gastos operativos <button type="button" class="info-icon" data-info="aplicarOtrosGastosOperativos" aria-label="Información">i</button></label>
+          </div>
+          <div class="form-field">
+            <label for="otrosGastosOperativosMonto">Otros gastos operativos (Gs., cargo único) <button type="button" class="info-icon" data-info="otrosGastosOperativosMonto" aria-label="Información">i</button></label>
+            <input type="text" id="otrosGastosOperativosMonto" name="otrosGastosOperativosMonto" inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="recargoUrgenciaPercent">Recargo por urgencia (%) <button type="button" class="info-icon" data-info="recargoUrgenciaPercent" aria-label="Información">i</button></label>
+            <input type="number" id="recargoUrgenciaPercent" name="recargoUrgenciaPercent" min="0" step="1">
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>Comercial (aplica a todos los servicios)</legend>
+          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
+            "Gastos administrativos" y "Contingencia" se suman como % sobre el costo interno (ver Copia de
+            seguridad → Rango comercial). Los 3 márgenes generan el rango: Mínimo / Recomendado / Máximo.
+          </p>
+          <div class="form-field">
+            <label for="gastosAdministrativosPercent">Gastos administrativos (%) <button type="button" class="info-icon" data-info="gastosAdministrativosPercent" aria-label="Información">i</button></label>
+            <input type="number" id="gastosAdministrativosPercent" name="gastosAdministrativosPercent" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="contingenciaPercent">Contingencia / imprevistos (%) <button type="button" class="info-icon" data-info="contingenciaPercent" aria-label="Información">i</button></label>
+            <input type="number" id="contingenciaPercent" name="contingenciaPercent" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="margenMinimoPercent">Margen mínimo (%) <button type="button" class="info-icon" data-info="margenMinimoPercent" aria-label="Información">i</button></label>
+            <input type="number" id="margenMinimoPercent" name="margenMinimoPercent" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="margenRecomendadoPercent">Margen recomendado (%) <button type="button" class="info-icon" data-info="margenRecomendadoPercent" aria-label="Información">i</button></label>
+            <input type="number" id="margenRecomendadoPercent" name="margenRecomendadoPercent" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="margenMaximoPercent">Margen máximo (%) <button type="button" class="info-icon" data-info="margenMaximoPercent" aria-label="Información">i</button></label>
+            <input type="number" id="margenMaximoPercent" name="margenMaximoPercent" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="ivaPercent">IVA (%) <button type="button" class="info-icon" data-info="ivaPercent" aria-label="Información">i</button></label>
+            <input type="number" id="ivaPercent" name="ivaPercent" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="descuentoMaximoPercent">Descuento máximo permitido (%) <button type="button" class="info-icon" data-info="descuentoMaximoPercent" aria-label="Información">i</button></label>
+            <input type="number" id="descuentoMaximoPercent" name="descuentoMaximoPercent" min="0" step="0.5">
+          </div>
+        </fieldset>
+
+        <div class="button-row">
+          <button type="submit" class="btn btn-primary">Guardar configuración</button>
+        </div>
+      </form>
+
+      <details class="service-accordion">
+        <summary>🗂️ Mano de obra de oficina y tareas internas (aplica a todos los servicios)</summary>
+        <div class="service-accordion-body">
+
+          <div class="card">
+            <div class="card-header-row">
+              <h2>Perfiles de oficina</h2>
+              <button class="btn btn-primary btn-small" id="btnAgregarPerfil">+ Agregar perfil</button>
+            </div>
+            <p class="muted small-note">
+              Cada perfil tiene su propio costo por hora y sus propias cargas sociales. El "costo hora cargado"
+              se calcula automáticamente (costo base + aguinaldo + IPS patronal + otros costos laborales).
+            </p>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Nombre del perfil</th>
+                    <th>Costo/hora (Gs.)</th>
+                    <th>Aguinaldo (%)</th>
+                    <th>IPS (%)</th>
+                    <th>Otros (%)</th>
+                    <th>Costo hora cargado</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="tablaPerfilesBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header-row">
+              <h2>Tareas internas</h2>
+              <button class="btn btn-primary btn-small" id="btnAgregarTarea">+ Agregar tarea</button>
+            </div>
+            <p class="muted small-note">
+              Horas de la tarea = Horas base + (Horas/PDV × PDV o sucursales) + (Horas/100 productos × bloques de 100) + (Horas/ciclo × ciclos).
+              Las tareas de informe, dashboard y presentación se calculan aparte, junto con su modo de costeo, para no duplicar montos.
+            </p>
+            <div id="tareasAlertBox" style="display:none;"></div>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Tarea</th>
+                    <th>Perfil responsable</th>
+                    <th>Horas base</th>
+                    <th>Horas/PDV</th>
+                    <th>Horas/100 prod.</th>
+                    <th>Horas/ciclo</th>
+                    <th>Revisiones</th>
+                    <th>Aplica a</th>
+                    <th>Activa</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="tablaTareasBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </details>
+
+      <div class="card">
+        <h2>Copia de seguridad</h2>
+        <p class="muted">Exporte su configuración para respaldarla, o restaure los valores de ejemplo originales.</p>
+        <div class="button-row">
+          <button class="btn btn-secondary" id="btnExportarConfig">Exportar configuración</button>
+          <label class="btn btn-secondary file-btn">
+            Importar configuración
+            <input type="file" id="inputImportarConfig" accept="application/json" hidden>
+          </label>
+          <button class="btn btn-danger" id="btnRestaurarConfig">Restaurar valores de ejemplo</button>
+        </div>
       </div>
     </section>
 
   </main>
 </div>
 
-<!-- ====================== MODAL GENÉRICO (confirmaciones / vista previa) ====================== -->
-<div class="modal-overlay" id="modalOverlay" hidden>
-  <div class="modal" id="modalBox">
-    <button class="modal-close" id="modalClose">&times;</button>
-    <div id="modalContent"></div>
+<!-- ===================== MODAL VISTA PREVIA ===================== -->
+<div class="modal" id="modalVistaPrevia">
+  <div class="modal-content">
+    <button class="modal-close" id="btnCerrarModal">✕</button>
+    <div id="modalVistaPreviaContenido"></div>
   </div>
 </div>
-
-<div id="toastContainer" class="toast-container"></div>
 
 <script src="app.js"></script>
 </body>
