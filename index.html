@@ -238,25 +238,6 @@
             configurado en "Configuración de costos".
           </p>
 
-          <div class="form-field">
-            <label for="nivelComplejidad">Nivel de complejidad del relevamiento <button type="button" class="info-icon" data-info="nivelComplejidad" aria-label="Información">i</button></label>
-            <select id="nivelComplejidad" name="nivelComplejidad">
-              <option value="basico" selected>Básico</option>
-              <option value="medio">Medio</option>
-              <option value="alto">Alto</option>
-            </select>
-          </div>
-
-          <div class="form-field">
-            <label for="rondasCorreccionSolicitadas">Rondas de corrección del informe solicitadas <button type="button" class="info-icon" data-info="rondasCorreccionSolicitadas" aria-label="Información">i</button></label>
-            <input type="number" id="rondasCorreccionSolicitadas" name="rondasCorreccionSolicitadas" min="0" value="1">
-          </div>
-
-          <div class="form-field">
-            <label for="reunionesSolicitadas">Reuniones con el cliente solicitadas <button type="button" class="info-icon" data-info="reunionesSolicitadas" aria-label="Información">i</button></label>
-            <input type="number" id="reunionesSolicitadas" name="reunionesSolicitadas" min="0" value="1">
-          </div>
-
           <div class="form-field form-field-full">
             <div class="checkbox-grid">
               <label class="checkbox-item"><input type="checkbox" name="requiresTrabajoNocturno"> Trabajo nocturno <button type="button" class="info-icon" data-info="requiresTrabajoNocturno" aria-label="Información">i</button></label>
@@ -570,12 +551,12 @@
         <fieldset class="form-section">
           <legend>Zona</legend>
           <div class="form-field">
-            <label for="surchargeGranAsuncionPercent">Recargo Gran Asunción (%) <button type="button" class="info-icon" data-info="surchargeGranAsuncionPercent" aria-label="Información">i</button></label>
-            <input type="number" id="surchargeGranAsuncionPercent" name="surchargeGranAsuncionPercent" min="0" step="0.5">
+            <label for="recargoGranAsuncionPorPdv">Recargo Gran Asunción (Gs. por PDV, por ciclo) <button type="button" class="info-icon" data-info="recargoGranAsuncionPorPdv" aria-label="Información">i</button></label>
+            <input type="text" id="recargoGranAsuncionPorPdv" name="recargoGranAsuncionPorPdv" inputmode="numeric">
           </div>
           <div class="form-field">
-            <label for="surchargeInteriorPercent">Recargo Interior (%) <button type="button" class="info-icon" data-info="surchargeInteriorPercent" aria-label="Información">i</button></label>
-            <input type="number" id="surchargeInteriorPercent" name="surchargeInteriorPercent" min="0" step="0.5">
+            <label for="recargoInteriorPorPdv">Recargo Interior (Gs. por PDV, por ciclo) <button type="button" class="info-icon" data-info="recargoInteriorPorPdv" aria-label="Información">i</button></label>
+            <input type="text" id="recargoInteriorPorPdv" name="recargoInteriorPorPdv" inputmode="numeric">
           </div>
         </fieldset>
 
@@ -709,16 +690,28 @@
             <input type="number" id="ipsPatronalPercent" name="ipsPatronalPercent" min="0" step="0.5">
           </div>
           <div class="form-field">
-            <label for="otrosCostosLaboralesPercent">Otros costos laborales (%) <button type="button" class="info-icon" data-info="otrosCostosLaboralesPercent" aria-label="Información">i</button></label>
-            <input type="number" id="otrosCostosLaboralesPercent" name="otrosCostosLaboralesPercent" min="0" step="0.5">
+            <label for="otrosCostosLaboralesPorHora">Otros costos laborales (Gs./hora) <button type="button" class="info-icon" data-info="otrosCostosLaboralesPorHora" aria-label="Información">i</button></label>
+            <input type="text" id="otrosCostosLaboralesPorHora" name="otrosCostosLaboralesPorHora" inputmode="numeric">
           </div>
           <div class="form-field">
-            <label for="recargoNocturnoPercent">Recargo por trabajo nocturno (%) <button type="button" class="info-icon" data-info="recargoNocturnoPercent" aria-label="Información">i</button></label>
-            <input type="number" id="recargoNocturnoPercent" name="recargoNocturnoPercent" min="0" step="1">
+            <label for="recargoNocturnoPorHora">Recargo por trabajo nocturno (Gs./hora) <button type="button" class="info-icon" data-info="recargoNocturnoPorHora" aria-label="Información">i</button></label>
+            <input type="text" id="recargoNocturnoPorHora" name="recargoNocturnoPorHora" inputmode="numeric">
           </div>
           <div class="form-field">
-            <label for="recargoFinDeSemanaPercent">Recargo por fin de semana / feriado (%) <button type="button" class="info-icon" data-info="recargoFinDeSemanaPercent" aria-label="Información">i</button></label>
-            <input type="number" id="recargoFinDeSemanaPercent" name="recargoFinDeSemanaPercent" min="0" step="1">
+            <label for="recargoFinDeSemanaPorHora">Recargo por fin de semana / feriado (Gs./hora) <button type="button" class="info-icon" data-info="recargoFinDeSemanaPorHora" aria-label="Información">i</button></label>
+            <input type="text" id="recargoFinDeSemanaPorHora" name="recargoFinDeSemanaPorHora" inputmode="numeric">
+          </div>
+          <p class="muted small-note form-field-full" style="margin:4px 0 -4px;">
+            Las horas de capacitación y supervisión se facturan a la tarifa del perfil "Coordinador de proyecto"
+            (ver "Mano de obra de oficina y tareas internas" más abajo).
+          </p>
+          <div class="form-field">
+            <label for="capacitacionInicialHoras">Horas de capacitación inicial <button type="button" class="info-icon" data-info="capacitacionInicialHoras" aria-label="Información">i</button></label>
+            <input type="number" id="capacitacionInicialHoras" name="capacitacionInicialHoras" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="supervisionCampoHorasPorCiclo">Horas de supervisión en campo, por ciclo <button type="button" class="info-icon" data-info="supervisionCampoHorasPorCiclo" aria-label="Información">i</button></label>
+            <input type="number" id="supervisionCampoHorasPorCiclo" name="supervisionCampoHorasPorCiclo" min="0" step="0.5">
           </div>
         </fieldset>
           </div>
@@ -804,97 +797,18 @@
         </details>
 
         <fieldset class="form-section">
-          <legend>Parámetros opcionales del proyecto (aplica a todos los servicios)</legend>
-          <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
-            El nivel de complejidad, revisitas y ausencias son toggles/valores generales; el resto se activa
-            por cotización (ver "Nueva cotización").
-          </p>
-          <div class="form-field">
-            <label for="complejidadMediaPercent">Complejidad media (% de tiempo adicional) <button type="button" class="info-icon" data-info="complejidadMediaPercent" aria-label="Información">i</button></label>
-            <input type="number" id="complejidadMediaPercent" name="complejidadMediaPercent" min="0" step="1">
-          </div>
-          <div class="form-field">
-            <label for="complejidadAltaPercent">Complejidad alta (% de tiempo adicional) <button type="button" class="info-icon" data-info="complejidadAltaPercent" aria-label="Información">i</button></label>
-            <input type="number" id="complejidadAltaPercent" name="complejidadAltaPercent" min="0" step="1">
-          </div>
-          <div class="form-field">
-            <label for="capacitacionInicialHoras">Horas de capacitación inicial <button type="button" class="info-icon" data-info="capacitacionInicialHoras" aria-label="Información">i</button></label>
-            <input type="number" id="capacitacionInicialHoras" name="capacitacionInicialHoras" min="0" step="0.5">
-          </div>
-          <div class="form-field">
-            <label for="supervisionCampoHorasPorCiclo">Horas de supervisión en campo, por ciclo <button type="button" class="info-icon" data-info="supervisionCampoHorasPorCiclo" aria-label="Información">i</button></label>
-            <input type="number" id="supervisionCampoHorasPorCiclo" name="supervisionCampoHorasPorCiclo" min="0" step="0.5">
-          </div>
-          <div class="form-field" style="justify-content:flex-end;">
-            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarRevisitasPercent" name="aplicarRevisitasPercent"> Activar % de revisitas <button type="button" class="info-icon" data-info="aplicarRevisitasPercent" aria-label="Información">i</button></label>
-          </div>
-          <div class="form-field">
-            <label for="revisitasPercent">% de revisitas estimadas <button type="button" class="info-icon" data-info="revisitasPercent" aria-label="Información">i</button></label>
-            <input type="number" id="revisitasPercent" name="revisitasPercent" min="0" step="1">
-          </div>
-          <div class="form-field" style="justify-content:flex-end;">
-            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarAusenciasPercent" name="aplicarAusenciasPercent"> Activar % de ausencias/PDV cerrados <button type="button" class="info-icon" data-info="aplicarAusenciasPercent" aria-label="Información">i</button></label>
-          </div>
-          <div class="form-field">
-            <label for="ausenciasPercent">% de ausencias o PDV cerrados <button type="button" class="info-icon" data-info="ausenciasPercent" aria-label="Información">i</button></label>
-            <input type="number" id="ausenciasPercent" name="ausenciasPercent" min="0" step="1">
-          </div>
-          <div class="form-field">
-            <label for="correccionesRondasIncluidas">Rondas de corrección incluidas sin costo <button type="button" class="info-icon" data-info="correccionesRondasIncluidas" aria-label="Información">i</button></label>
-            <input type="number" id="correccionesRondasIncluidas" name="correccionesRondasIncluidas" min="0" step="1">
-          </div>
-          <div class="form-field">
-            <label for="horasPorRondaCorreccionExtra">Horas del analista, por ronda extra <button type="button" class="info-icon" data-info="horasPorRondaCorreccionExtra" aria-label="Información">i</button></label>
-            <input type="number" id="horasPorRondaCorreccionExtra" name="horasPorRondaCorreccionExtra" min="0" step="0.5">
-          </div>
-          <div class="form-field">
-            <label for="reunionesIncluidas">Reuniones incluidas sin costo <button type="button" class="info-icon" data-info="reunionesIncluidas" aria-label="Información">i</button></label>
-            <input type="number" id="reunionesIncluidas" name="reunionesIncluidas" min="0" step="1">
-          </div>
-          <div class="form-field">
-            <label for="horasPorReunionExtra">Horas del coordinador, por reunión extra <button type="button" class="info-icon" data-info="horasPorReunionExtra" aria-label="Información">i</button></label>
-            <input type="number" id="horasPorReunionExtra" name="horasPorReunionExtra" min="0" step="0.5">
-          </div>
-          <div class="form-field" style="justify-content:flex-end;">
-            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarGastoTelefonia" name="aplicarGastoTelefonia"> Activar gasto de telefonía/datos <button type="button" class="info-icon" data-info="aplicarGastoTelefonia" aria-label="Información">i</button></label>
-          </div>
-          <div class="form-field">
-            <label for="gastoTelefoniaPorRelevador">Gasto de telefonía, por relevador/shopper (Gs.) <button type="button" class="info-icon" data-info="gastoTelefoniaPorRelevador" aria-label="Información">i</button></label>
-            <input type="text" id="gastoTelefoniaPorRelevador" name="gastoTelefoniaPorRelevador" inputmode="numeric">
-          </div>
-          <div class="form-field" style="justify-content:flex-end;">
-            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarCostoHerramientas" name="aplicarCostoHerramientas"> Activar costo de herramientas/licencias <button type="button" class="info-icon" data-info="aplicarCostoHerramientas" aria-label="Información">i</button></label>
-          </div>
-          <div class="form-field">
-            <label for="costoHerramientasLicencias">Costo de herramientas/licencias (Gs., cargo único) <button type="button" class="info-icon" data-info="costoHerramientasLicencias" aria-label="Información">i</button></label>
-            <input type="text" id="costoHerramientasLicencias" name="costoHerramientasLicencias" inputmode="numeric">
-          </div>
-          <div class="form-field" style="justify-content:flex-end;">
-            <label class="checkbox-item" style="font-weight:600;"><input type="checkbox" id="aplicarOtrosGastosOperativos" name="aplicarOtrosGastosOperativos"> Activar otros gastos operativos <button type="button" class="info-icon" data-info="aplicarOtrosGastosOperativos" aria-label="Información">i</button></label>
-          </div>
-          <div class="form-field">
-            <label for="otrosGastosOperativosMonto">Otros gastos operativos (Gs., cargo único) <button type="button" class="info-icon" data-info="otrosGastosOperativosMonto" aria-label="Información">i</button></label>
-            <input type="text" id="otrosGastosOperativosMonto" name="otrosGastosOperativosMonto" inputmode="numeric">
-          </div>
-          <div class="form-field">
-            <label for="recargoUrgenciaPercent">Recargo por urgencia (%) <button type="button" class="info-icon" data-info="recargoUrgenciaPercent" aria-label="Información">i</button></label>
-            <input type="number" id="recargoUrgenciaPercent" name="recargoUrgenciaPercent" min="0" step="1">
-          </div>
-        </fieldset>
-
-        <fieldset class="form-section">
           <legend>Comercial (aplica a todos los servicios)</legend>
           <p class="muted small-note form-field-full" style="margin:-4px 0 4px;">
             "Gastos administrativos" y "Contingencia" se suman como % sobre el costo interno (ver Copia de
             seguridad → Rango comercial). Los 3 márgenes generan el rango: Mínimo / Recomendado / Máximo.
           </p>
           <div class="form-field">
-            <label for="gastosAdministrativosPercent">Gastos administrativos (%) <button type="button" class="info-icon" data-info="gastosAdministrativosPercent" aria-label="Información">i</button></label>
-            <input type="number" id="gastosAdministrativosPercent" name="gastosAdministrativosPercent" min="0" step="0.5">
+            <label for="gastosAdministrativosMonto">Gastos administrativos (Gs., cargo fijo) <button type="button" class="info-icon" data-info="gastosAdministrativosMonto" aria-label="Información">i</button></label>
+            <input type="text" id="gastosAdministrativosMonto" name="gastosAdministrativosMonto" inputmode="numeric">
           </div>
           <div class="form-field">
-            <label for="contingenciaPercent">Contingencia / imprevistos (%) <button type="button" class="info-icon" data-info="contingenciaPercent" aria-label="Información">i</button></label>
-            <input type="number" id="contingenciaPercent" name="contingenciaPercent" min="0" step="0.5">
+            <label for="contingenciaMonto">Contingencia / imprevistos (Gs., cargo fijo) <button type="button" class="info-icon" data-info="contingenciaMonto" aria-label="Información">i</button></label>
+            <input type="text" id="contingenciaMonto" name="contingenciaMonto" inputmode="numeric">
           </div>
           <div class="form-field">
             <label for="margenMinimoPercent">Margen mínimo (%) <button type="button" class="info-icon" data-info="margenMinimoPercent" aria-label="Información">i</button></label>
@@ -915,6 +829,10 @@
           <div class="form-field">
             <label for="descuentoMaximoPercent">Descuento máximo permitido (%) <button type="button" class="info-icon" data-info="descuentoMaximoPercent" aria-label="Información">i</button></label>
             <input type="number" id="descuentoMaximoPercent" name="descuentoMaximoPercent" min="0" step="0.5">
+          </div>
+          <div class="form-field">
+            <label for="recargoUrgenciaMonto">Recargo por urgencia (Gs., cargo fijo) <button type="button" class="info-icon" data-info="recargoUrgenciaMonto" aria-label="Información">i</button></label>
+            <input type="text" id="recargoUrgenciaMonto" name="recargoUrgenciaMonto" inputmode="numeric">
           </div>
         </fieldset>
 
@@ -944,7 +862,7 @@
                     <th>Costo/hora (Gs.)</th>
                     <th>Aguinaldo (%)</th>
                     <th>IPS (%)</th>
-                    <th>Otros (%)</th>
+                    <th>Otros (Gs./hora)</th>
                     <th>Costo hora cargado</th>
                     <th>Acciones</th>
                   </tr>

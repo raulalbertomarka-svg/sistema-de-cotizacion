@@ -189,7 +189,7 @@ Con la jornada efectiva del shopper se calculan las visitas posibles por día y 
 ### 7.3. Cómo se determina el rango de precio
 
 1. **Costo interno total** = mano de obra de campo + mano de obra de oficina + traslados + viáticos + alojamiento + servicios adicionales + parámetros opcionales activados + costo manual.
-2. **Costo con gastos** = Costo interno × (1 + Gastos administrativos % + Contingencia % + Recargo por urgencia % si el proyecto es urgente).
+2. **Costo con gastos** = Costo interno + Gastos administrativos (Gs.) + Contingencia (Gs.) + Recargo por urgencia (Gs.) si el proyecto es urgente. Estos 3 son montos fijos, no porcentajes (los únicos porcentajes del sistema son: márgenes, aguinaldo, IPS patronal, IVA y descuento máximo — el resto de recargos de costo están en Gs. o en horas).
 3. Se arman **3 cotizaciones completas en paralelo**, una por cada margen configurado (Mínimo / Recomendado / Máximo) — en Auditoría, además, cada una usa el precio de escala correspondiente (mínimo/recomendado/máximo de la tabla de escalas). Esto da el **Rango comercial**: Precio mínimo, Precio recomendado y Precio máximo.
 4. En el resultado de cada cotización, un selector permite elegir el **"Precio final que se presentará al cliente"**: mínimo, recomendado, máximo, o un valor manual. Si el manual queda por debajo del mínimo, el sistema avisa pero no bloquea. El precio elegido se guarda en el historial.
 
@@ -201,7 +201,7 @@ Absolutamente **todos** los valores numéricos de Configuración de costos son d
 - Costo por hora del relevador, del mystery shopper, y de cada perfil de oficina, con sus % de aguinaldo/IPS/otros.
 - Las escalas de precio (mínimo/recomendado/máximo por rango de PDV).
 - Márgenes mínimo/recomendado/máximo, gastos administrativos y contingencia.
-- Los parámetros opcionales que decida activar (revisitas, ausencias, telefonía, herramientas, etc.) y sus montos.
+- Los parámetros opcionales del proyecto: solo quedan 5 checkboxes en "Nueva cotización" (trabajo nocturno, fin de semana/feriado, capacitación inicial, supervisión en campo, proyecto urgente) — cada uno cuesta un monto fijo en Gs. u horas, configurado en "Mano de obra de campo" y "Comercial".
 
 ---
 

@@ -51,8 +51,8 @@ function getDefaultConfig() {
     extraProductSurcharge: 5000, // Gs. por cada producto adicional, por PDV, por ciclo
 
     // --- Zona ---
-    surchargeGranAsuncionPercent: 5, // % sobre el subtotal recurrente
-    surchargeInteriorPercent: 15, // % sobre el subtotal recurrente
+    recargoGranAsuncionPorPdv: 300000, // Gs. fijos por PDV, por ciclo, en Gran Asunción
+    recargoInteriorPorPdv: 800000, // Gs. fijos por PDV, por ciclo, en Interior
 
     // --- Auditores ---
     pdvPerAuditor: 5, // capacidad de PDV que cubre 1 auditor (para modo automático)
@@ -85,8 +85,8 @@ function getDefaultConfig() {
     descuentoMaximoPercent: 15,
 
     // --- Costo interno vs. precio comercial (VALORES DE EJEMPLO) ---
-    gastosAdministrativosPercent: 5, // % de gastos administrativos, sobre el costo interno
-    contingenciaPercent: 5, // % de contingencia/imprevistos, sobre el costo interno
+    gastosAdministrativosMonto: 300000, // Gs. fijos, por proyecto, para gastos administrativos
+    contingenciaMonto: 300000, // Gs. fijos, por proyecto, para imprevistos/contingencia
     margenMinimoPercent: 10, // % de margen para el precio MÍNIMO del rango comercial
     margenRecomendadoPercent: 20, // % de margen para el precio RECOMENDADO (objetivo)
     margenMaximoPercent: 35, // % de margen para el precio MÁXIMO sugerido
@@ -94,34 +94,18 @@ function getDefaultConfig() {
     // --- Parámetros opcionales del proyecto (VALORES DE EJEMPLO) ---
     // Todos son ajustes que se activan/desactivan por cotización (checkbox o
     // selección), pero cuyo COSTO se configura acá.
-    complejidadMediaPercent: 15, // % de tiempo adicional si el relevamiento es de complejidad media
-    complejidadAltaPercent: 30, // % de tiempo adicional si es de complejidad alta
     capacitacionInicialHoras: 4, // horas de capacitación inicial al equipo de campo (cargo único)
     supervisionCampoHorasPorCiclo: 1, // horas de supervisión en campo, por ciclo
-    aplicarRevisitasPercent: false, // si se activa, se suma este % a las horas de campo
-    revisitasPercent: 5,
-    aplicarAusenciasPercent: false, // si se activa, se suma este % a las horas de campo (PDV cerrados, etc.)
-    ausenciasPercent: 5,
-    correccionesRondasIncluidas: 1, // rondas de corrección del informe incluidas sin costo extra
-    horasPorRondaCorreccionExtra: 2, // horas del analista por cada ronda de corrección adicional
-    reunionesIncluidas: 1, // reuniones con el cliente incluidas sin costo extra
-    horasPorReunionExtra: 1.5, // horas del coordinador por cada reunión adicional
-    aplicarGastoTelefonia: false,
-    gastoTelefoniaPorRelevador: 50000, // Gs. por relevador/shopper asignado al proyecto
-    aplicarCostoHerramientas: false,
-    costoHerramientasLicencias: 200000, // Gs., cargo único del proyecto
-    aplicarOtrosGastosOperativos: false,
-    otrosGastosOperativosMonto: 0, // Gs., cargo único adicional libre
-    recargoUrgenciaPercent: 15, // % adicional sobre el costo con gastos, si el proyecto es urgente
+    recargoUrgenciaMonto: 500000, // Gs. fijos, si el proyecto es urgente
 
     // --- Mano de obra (horas hombre), con cargas sociales (VALORES DE EJEMPLO) ---
     costoPorHoraHombre: 25000, // Gs. por hora de trabajo del auditor, sin cargas
     horasPorVisitaPdv: 2, // [OBSOLETO] se mantiene solo como respaldo si faltan los tiempos detallados de abajo
     aguinaldoPercent: 8.33, // % legal del aguinaldo (equivalente a 1/12 del salario)
     ipsPatronalPercent: 16.5, // % de aporte patronal al IPS
-    otrosCostosLaboralesPercent: 0, // % adicional de cargas (seguros, ropa de trabajo, etc.)
-    recargoNocturnoPercent: 30, // % de recargo sobre la hora cargada, si se marca "trabajo nocturno"
-    recargoFinDeSemanaPercent: 50, // % de recargo sobre la hora cargada, si se marca "fin de semana / feriado"
+    otrosCostosLaboralesPorHora: 0, // Gs. adicionales por hora (seguros, ropa de trabajo, etc.)
+    recargoNocturnoPorHora: 15000, // Gs. adicionales por hora, si se marca "trabajo nocturno"
+    recargoFinDeSemanaPorHora: 20000, // Gs. adicionales por hora, si se marca "fin de semana / feriado"
 
     // --- Auditoría en PDV: tiempos de relevamiento (VALORES DE EJEMPLO, en minutos) ---
     auditPrepMinutos: 10, // ingreso, presentación y preparación, por PDV
@@ -156,11 +140,11 @@ function getDefaultConfig() {
     // --- Mano de obra de oficina: perfiles (VALORES DE EJEMPLO) ---
     // Cada perfil tiene su propio costo por hora y sus propias cargas sociales.
     officeProfiles: [
-      { id: 'perfil_coordinador', nombre: 'Coordinador de proyecto', costoPorHora: 35000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
-      { id: 'perfil_analista', nombre: 'Analista', costoPorHora: 30000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
-      { id: 'perfil_disenador', nombre: 'Diseñador de presentación', costoPorHora: 28000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
-      { id: 'perfil_dashboard', nombre: 'Especialista en dashboard', costoPorHora: 32000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
-      { id: 'perfil_calidad', nombre: 'Control de calidad', costoPorHora: 27000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0 },
+      { id: 'perfil_coordinador', nombre: 'Coordinador de proyecto', costoPorHora: 35000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPorHora: 0 },
+      { id: 'perfil_analista', nombre: 'Analista', costoPorHora: 30000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPorHora: 0 },
+      { id: 'perfil_disenador', nombre: 'Diseñador de presentación', costoPorHora: 28000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPorHora: 0 },
+      { id: 'perfil_dashboard', nombre: 'Especialista en dashboard', costoPorHora: 32000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPorHora: 0 },
+      { id: 'perfil_calidad', nombre: 'Control de calidad', costoPorHora: 27000, aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPorHora: 0 },
     ],
 
     // --- Mano de obra de oficina: tareas internas (VALORES DE EJEMPLO) ---
@@ -463,23 +447,24 @@ function obtenerPrecioBasePorPDV(pdvCount, config) {
 
 /**
  * Calcula el "costo hora cargado" de cualquier perfil de mano de obra:
- * costo base + aguinaldo + IPS patronal + otros costos laborales (todos %),
- * y opcionalmente los recargos por trabajo nocturno y/o fin de semana/feriado
- * (estos últimos SOLO si el llamador indica que corresponden).
+ * costo base + aguinaldo + IPS patronal (% legales) + otros costos laborales
+ * (monto fijo en Gs. por hora), y opcionalmente los recargos por trabajo
+ * nocturno y/o fin de semana/feriado (montos fijos en Gs. por hora, SOLO si
+ * el llamador indica que corresponden).
  */
 function calcularCostoHoraCargado(costoBasePorHora, config, opciones = {}) {
   const base = Number(costoBasePorHora) || 0;
   const aguinaldo = Number(config.aguinaldoPercent) || 0;
   const ips = Number(config.ipsPatronalPercent) || 0;
-  const otros = Number(config.otrosCostosLaboralesPercent) || 0;
+  const otrosPorHora = Number(config.otrosCostosLaboralesPorHora) || 0;
 
-  const costoConCargasSociales = base * (1 + (aguinaldo + ips + otros) / 100);
+  const costoConCargasSociales = base * (1 + (aguinaldo + ips) / 100) + otrosPorHora;
 
-  let factorRecargo = 1;
-  if (opciones.nocturno) factorRecargo += (Number(config.recargoNocturnoPercent) || 0) / 100;
-  if (opciones.finDeSemana) factorRecargo += (Number(config.recargoFinDeSemanaPercent) || 0) / 100;
+  let recargoFijo = 0;
+  if (opciones.nocturno) recargoFijo += Number(config.recargoNocturnoPorHora) || 0;
+  if (opciones.finDeSemana) recargoFijo += Number(config.recargoFinDeSemanaPorHora) || 0;
 
-  return costoConCargasSociales * factorRecargo;
+  return costoConCargasSociales + recargoFijo;
 }
 
 /**
@@ -506,7 +491,7 @@ function obtenerCostoHoraPerfilPorId(config, perfilId, costoDeRespaldo) {
   return calcularCostoHoraCargado(perfil.costoPorHora, {
     aguinaldoPercent: perfil.aguinaldoPercent,
     ipsPatronalPercent: perfil.ipsPatronalPercent,
-    otrosCostosLaboralesPercent: perfil.otrosCostosLaboralesPercent,
+    otrosCostosLaboralesPorHora: perfil.otrosCostosLaboralesPorHora,
   }, {});
 }
 
@@ -518,17 +503,13 @@ function obtenerCostoHoraPerfilPorId(config, perfilId, costoDeRespaldo) {
  * para que cada motor de cálculo (Auditoría / Mystery Shopper) lo aplique
  * sobre sus propias horas y dotación.
  */
+/**
+ * Calcula el conjunto de "parámetros opcionales del proyecto" (capacitación
+ * inicial, supervisión en campo y urgencia). Todos se activan por checkbox
+ * en la cotización y su costo está expresado en Gs. y horas (no en %).
+ */
 function calcularParametrosOpcionales(inputs, config, dotacion) {
-  // --- Factor multiplicador sobre las horas de campo ---
-  let factorHoras = 1;
-  if (inputs.nivelComplejidad === 'medio') factorHoras += (Number(config.complejidadMediaPercent) || 0) / 100;
-  if (inputs.nivelComplejidad === 'alto') factorHoras += (Number(config.complejidadAltaPercent) || 0) / 100;
-  if (config.aplicarRevisitasPercent) factorHoras += (Number(config.revisitasPercent) || 0) / 100;
-  if (config.aplicarAusenciasPercent) factorHoras += (Number(config.ausenciasPercent) || 0) / 100;
-
-  // --- Costos adicionales (cargo único o por ciclo) ---
   const costoHoraCoordinador = obtenerCostoHoraPerfilPorId(config, 'perfil_coordinador', config.costoPorHoraHombre);
-  const costoHoraAnalista = obtenerCostoHoraPerfilPorId(config, 'perfil_analista', config.costoPorHoraHombre);
 
   const costoCapacitacionInicial = inputs.requiereCapacitacionInicial
     ? (Number(config.capacitacionInicialHoras) || 0) * costoHoraCoordinador
@@ -538,41 +519,16 @@ function calcularParametrosOpcionales(inputs, config, dotacion) {
     ? (Number(config.supervisionCampoHorasPorCiclo) || 0) * (Number(inputs.ciclosParaSupervision) || 1) * costoHoraCoordinador
     : 0;
 
-  const rondasIncluidas = Number(config.correccionesRondasIncluidas) || 0;
-  const rondasSolicitadas = Number(inputs.rondasCorreccionSolicitadas) || rondasIncluidas;
-  const rondasExtra = Math.max(0, rondasSolicitadas - rondasIncluidas);
-  const costoCorreccionesExtra = rondasExtra * (Number(config.horasPorRondaCorreccionExtra) || 0) * costoHoraAnalista;
+  const costoAdicionalTotal = costoCapacitacionInicial + costoSupervisionCampo;
 
-  const reunionesIncluidas = Number(config.reunionesIncluidas) || 0;
-  const reunionesSolicitadas = Number(inputs.reunionesSolicitadas) || reunionesIncluidas;
-  const reunionesExtra = Math.max(0, reunionesSolicitadas - reunionesIncluidas);
-  const costoReunionesExtra = reunionesExtra * (Number(config.horasPorReunionExtra) || 0) * costoHoraCoordinador;
-
-  const costoTelefonia = config.aplicarGastoTelefonia
-    ? (Number(config.gastoTelefoniaPorRelevador) || 0) * (Number(dotacion) || 1)
-    : 0;
-  const costoHerramientas = config.aplicarCostoHerramientas ? (Number(config.costoHerramientasLicencias) || 0) : 0;
-  const otrosGastosOperativos = config.aplicarOtrosGastosOperativos ? (Number(config.otrosGastosOperativosMonto) || 0) : 0;
-
-  const costoAdicionalTotal = costoCapacitacionInicial + costoSupervisionCampo + costoCorreccionesExtra
-    + costoReunionesExtra + costoTelefonia + costoHerramientas + otrosGastosOperativos;
-
-  // --- Recargo por urgencia (se aplica sobre el costo con gastos, no acá) ---
-  const recargoUrgenciaPercent = inputs.esUrgente ? (Number(config.recargoUrgenciaPercent) || 0) : 0;
+  // --- Recargo por urgencia: monto fijo en Gs. (no %), se suma al costo con gastos ---
+  const recargoUrgenciaMonto = inputs.esUrgente ? (Number(config.recargoUrgenciaMonto) || 0) : 0;
 
   return {
-    factorHoras,
     costoCapacitacionInicial,
     costoSupervisionCampo,
-    rondasExtra,
-    costoCorreccionesExtra,
-    reunionesExtra,
-    costoReunionesExtra,
-    costoTelefonia,
-    costoHerramientas,
-    otrosGastosOperativos,
     costoAdicionalTotal,
-    recargoUrgenciaPercent,
+    recargoUrgenciaMonto,
   };
 }
 
@@ -627,7 +583,7 @@ function calcularManoObraOficina(inputs, config) {
       ? calcularCostoHoraCargado(perfil.costoPorHora, {
           aguinaldoPercent: perfil.aguinaldoPercent,
           ipsPatronalPercent: perfil.ipsPatronalPercent,
-          otrosCostosLaboralesPercent: perfil.otrosCostosLaboralesPercent,
+          otrosCostosLaboralesPorHora: perfil.otrosCostosLaboralesPorHora,
         }, {})
       : 0;
     const costoTarea = horas * costoHoraCargado;
@@ -784,11 +740,7 @@ function calcularMysteryShopper(inputs, config) {
   // El tiempo por visita ahora se calcula con precisión (traslado, espera,
   // interacción, relevamiento de productos/servicios, evidencia e informe).
   const tiempoMS = calcularTiempoMysteryShopper(inputs, config);
-
-  // Parámetros opcionales (complejidad, revisitas, ausencias) afectan las
-  // horas de campo ANTES de calcular cuántos shoppers se necesitan.
-  const parametrosOpcionalesPreliminar = calcularParametrosOpcionales(inputs, config, 1);
-  const horasPorVisita = tiempoMS.horasPorVisita * parametrosOpcionalesPreliminar.factorHoras;
+  const horasPorVisita = tiempoMS.horasPorVisita;
 
   const visitasTotales = sucursales * rondas;
   const horasHombreCampo = visitasTotales * horasPorVisita;
@@ -849,9 +801,9 @@ function calcularMysteryShopper(inputs, config) {
   // aplicar los 3 niveles de margen (mínimo/recomendado/máximo) sobre el
   // mismo costo interno con gastos administrativos y contingencia.
   const costoInternoTotal = subtotalGeneral + costoAdicionalManual;
-  const gastosAdministrativosPercent = Number(config.gastosAdministrativosPercent) || 0;
-  const contingenciaPercent = Number(config.contingenciaPercent) || 0;
-  const montoGastosYContingencia = costoInternoTotal * ((gastosAdministrativosPercent + contingenciaPercent + parametrosOpcionales.recargoUrgenciaPercent) / 100);
+  const gastosAdministrativosMonto = Number(config.gastosAdministrativosMonto) || 0;
+  const contingenciaMonto = Number(config.contingenciaMonto) || 0;
+  const montoGastosYContingencia = gastosAdministrativosMonto + contingenciaMonto + parametrosOpcionales.recargoUrgenciaMonto;
   const costoConGastos = costoInternoTotal + montoGastosYContingencia;
 
   const tierMinimo = calcularPipelineComercial(costoConGastos, config.margenMinimoPercent, config, inputs);
@@ -892,7 +844,6 @@ function calcularMysteryShopper(inputs, config) {
       costoManoDeObraOficina,
       horasTotalesOficina: manoDeObraOficina.horasTotalesOficina,
       tareasOficinaDetalle: manoDeObraOficina.tareasDetalle,
-      factorHorasOpcionales: parametrosOpcionalesPreliminar.factorHoras,
       costoCapacitacionInicial: parametrosOpcionales.costoCapacitacionInicial,
       costoSupervisionCampo: parametrosOpcionales.costoSupervisionCampo,
       rondasCorreccionExtra: parametrosOpcionales.rondasExtra,
@@ -902,13 +853,13 @@ function calcularMysteryShopper(inputs, config) {
       costoTelefonia: parametrosOpcionales.costoTelefonia,
       costoHerramientas: parametrosOpcionales.costoHerramientas,
       otrosGastosOperativos: parametrosOpcionales.otrosGastosOperativos,
-      recargoUrgenciaPercent: parametrosOpcionales.recargoUrgenciaPercent,
+      recargoUrgenciaMonto: parametrosOpcionales.recargoUrgenciaMonto,
       subtotalManoObra,
       subtotalGeneral,
       costoAdicionalManual,
       costoInternoTotal,
-      gastosAdministrativosPercent,
-      contingenciaPercent,
+      gastosAdministrativosMonto,
+      contingenciaMonto,
       montoGastosYContingencia,
       costoConGastos,
       rangoComercial,
@@ -1045,28 +996,25 @@ function calcularAuditoriaPDV(inputs, config) {
   const subtotalPorCiclo = precioBaseCiclo + recargoProductosCiclo + recargoVisitasCiclo;
   const subtotalRecurrente = subtotalPorCiclo * ciclos;
 
-  // --- 4. Recargo por zona (sobre el subtotal recurrente) ---
-  let porcentajeZona = 0;
+  // --- 4. Recargo por zona: monto fijo en Gs. por PDV, por cada ciclo ---
+  let recargoZonaPorPdvPorCiclo = 0;
   if (inputs.zone === 'granAsuncion') {
-    porcentajeZona = Number(config.surchargeGranAsuncionPercent) || 0;
+    recargoZonaPorPdvPorCiclo = Number(config.recargoGranAsuncionPorPdv) || 0;
   } else if (inputs.zone === 'interior') {
-    porcentajeZona = Number(config.surchargeInteriorPercent) || 0;
-  } else if (inputs.zone === 'combinada') {
-    // Zona combinada: se distribuyen los PDV entre las 3 zonas y se calcula
-    // un porcentaje de recargo PONDERADO según qué proporción de PDV cae en
-    // cada zona (Asunción no suma recargo).
-    const pAsuncion = Number(inputs.pdvAsuncion) || 0;
+    recargoZonaPorPdvPorCiclo = Number(config.recargoInteriorPorPdv) || 0;
+  }
+
+  let recargoZona;
+  if (inputs.zone === 'combinada') {
+    // Zona combinada: cada grupo de PDV paga el recargo fijo de SU zona,
+    // por cada ciclo del proyecto (Asunción no suma recargo).
     const pGranAsuncion = Number(inputs.pdvGranAsuncion) || 0;
     const pInterior = Number(inputs.pdvInterior) || 0;
-    const totalZona = pAsuncion + pGranAsuncion + pInterior;
-    const base = totalZona > 0 ? totalZona : pdv;
-    if (base > 0) {
-      porcentajeZona =
-        (pGranAsuncion * (Number(config.surchargeGranAsuncionPercent) || 0) +
-          pInterior * (Number(config.surchargeInteriorPercent) || 0)) / base;
-    }
+    recargoZona = (pGranAsuncion * (Number(config.recargoGranAsuncionPorPdv) || 0)
+      + pInterior * (Number(config.recargoInteriorPorPdv) || 0)) * ciclos;
+  } else {
+    recargoZona = pdv * recargoZonaPorPdvPorCiclo * ciclos;
   }
-  const recargoZona = subtotalRecurrente * (porcentajeZona / 100);
 
   // --- 5. Auditores ---
   let cantidadAuditores;
@@ -1126,7 +1074,7 @@ function calcularAuditoriaPDV(inputs, config) {
     cantidadAuditores
   );
 
-  const horasHombreTotales = tiempoAuditoria.horasHombreCampo * parametrosOpcionales.factorHoras;
+  const horasHombreTotales = tiempoAuditoria.horasHombreCampo;
   const costoHoraHombreCargado = calcularCostoHoraCargado(config.costoPorHoraHombre, config, {
     nocturno: !!inputs.requiresTrabajoNocturno,
     finDeSemana: !!inputs.requiresFinDeSemana,
@@ -1146,9 +1094,9 @@ function calcularAuditoriaPDV(inputs, config) {
   // (mano de obra, traslados, viáticos, servicios adicionales, etc.), sin
   // ningún componente comercial todavía.
   const costoInternoTotal = subtotalOperativo;
-  const gastosAdministrativosPercent = Number(config.gastosAdministrativosPercent) || 0;
-  const contingenciaPercent = Number(config.contingenciaPercent) || 0;
-  const montoGastosYContingencia = costoInternoTotal * ((gastosAdministrativosPercent + contingenciaPercent + parametrosOpcionales.recargoUrgenciaPercent) / 100);
+  const gastosAdministrativosMonto = Number(config.gastosAdministrativosMonto) || 0;
+  const contingenciaMonto = Number(config.contingenciaMonto) || 0;
+  const montoGastosYContingencia = gastosAdministrativosMonto + contingenciaMonto + parametrosOpcionales.recargoUrgenciaMonto;
   const costoConGastos = costoInternoTotal + montoGastosYContingencia;
 
   // El precio "de escala" (mínimo/recomendado/máximo) se combina con los
@@ -1157,12 +1105,13 @@ function calcularAuditoriaPDV(inputs, config) {
   function calcularTier(precioBaseCicloTier, margenPercentTier) {
     const subtotalPorCicloTier = precioBaseCicloTier + recargoProductosCiclo + recargoVisitasCiclo;
     const subtotalRecurrenteTier = subtotalPorCicloTier * ciclos;
-    const recargoZonaTier = subtotalRecurrenteTier * (porcentajeZona / 100);
-    const subtotalAntesMargenTier = subtotalRecurrenteTier + recargoZonaTier + costoConGastos;
+    // El recargo de zona es un monto fijo en Gs. (no depende del precio de
+    // escala), así que es el mismo para los 3 niveles del rango comercial.
+    const subtotalAntesMargenTier = subtotalRecurrenteTier + recargoZona + costoConGastos;
     return {
       subtotalPorCiclo: subtotalPorCicloTier,
       subtotalRecurrente: subtotalRecurrenteTier,
-      recargoZona: recargoZonaTier,
+      recargoZona,
       subtotalAntesMargen: subtotalAntesMargenTier,
       ...calcularPipelineComercial(subtotalAntesMargenTier, margenPercentTier, config, inputs),
     };
@@ -1204,7 +1153,6 @@ function calcularAuditoriaPDV(inputs, config) {
       recargoVisitasCiclo,
       subtotalPorCiclo,
       subtotalRecurrente,
-      porcentajeZona,
       recargoZona,
       cantidadAuditores,
       costoTraslado,
@@ -1224,7 +1172,6 @@ function calcularAuditoriaPDV(inputs, config) {
       diasNecesariosConUnaPersona: tiempoAuditoria.diasNecesariosConUnaPersona,
       relevadoresRecomendados: tiempoAuditoria.relevadoresRecomendados,
       // --- Parámetros opcionales aplicados ---
-      factorHorasOpcionales: parametrosOpcionales.factorHoras,
       costoCapacitacionInicial: parametrosOpcionales.costoCapacitacionInicial,
       costoSupervisionCampo: parametrosOpcionales.costoSupervisionCampo,
       rondasCorreccionExtra: parametrosOpcionales.rondasExtra,
@@ -1234,7 +1181,7 @@ function calcularAuditoriaPDV(inputs, config) {
       costoTelefonia: parametrosOpcionales.costoTelefonia,
       costoHerramientas: parametrosOpcionales.costoHerramientas,
       otrosGastosOperativos: parametrosOpcionales.otrosGastosOperativos,
-      recargoUrgenciaPercent: parametrosOpcionales.recargoUrgenciaPercent,
+      recargoUrgenciaMonto: parametrosOpcionales.recargoUrgenciaMonto,
       costoManoDeObraOficina,
       horasTotalesOficina: manoDeObraOficina.horasTotalesOficina,
       tareasOficinaDetalle: manoDeObraOficina.tareasDetalle,
@@ -1242,8 +1189,8 @@ function calcularAuditoriaPDV(inputs, config) {
       subtotalOperativo,
       // --- Costo interno vs. precio comercial (rango) ---
       costoInternoTotal,
-      gastosAdministrativosPercent,
-      contingenciaPercent,
+      gastosAdministrativosMonto,
+      contingenciaMonto,
       montoGastosYContingencia,
       costoConGastos,
       rangoComercial,
@@ -1318,7 +1265,9 @@ const CAMPOS_MONEDA_CONFIG = [
   'alojamientoPorAuditorPorNoche', 'costoVisitaAdicional', 'costoEvidenciaFotografica',
   'costoInformeFinal', 'costoDashboard', 'costoPresentacion', 'costoPorHoraHombre',
   'msCostoHoraShopper', 'msCostoHoraAnalista', 'msViaticoPorVisita',
-  'gastoTelefoniaPorRelevador', 'costoHerramientasLicencias', 'otrosGastosOperativosMonto',
+  'recargoGranAsuncionPorPdv', 'recargoInteriorPorPdv',
+  'otrosCostosLaboralesPorHora', 'recargoNocturnoPorHora', 'recargoFinDeSemanaPorHora',
+  'gastosAdministrativosMonto', 'contingenciaMonto', 'recargoUrgenciaMonto',
 ];
 
 function validarFormularioCotizacion(inputs) {
@@ -1527,8 +1476,8 @@ const INFO_TEXTS = {
   extraProductSurcharge: 'Monto que se cobra POR CADA PRODUCTO adicional (uno por uno, no por lote de 10 ni de 100) que supere la cantidad de "Productos incluidos" de la escala correspondiente. Se multiplica por la cantidad de PDV y se cobra en cada ciclo. Ejemplo: escala con 50 productos incluidos, cliente pide 60 en 10 PDV, recargo Gs. 5.000 → (60-50) × Gs. 5.000 × 10 PDV = Gs. 500.000 por ciclo.',
 
   // --- Configuración: Zona ---
-  surchargeGranAsuncionPercent: 'Porcentaje que se suma sobre el subtotal recurrente (precio base + recargos por ciclo) cuando la zona elegida en la cotización es "Gran Asunción".',
-  surchargeInteriorPercent: 'Porcentaje que se suma sobre el subtotal recurrente cuando la zona elegida en la cotización es "Interior". Suele ser mayor que el de Gran Asunción por la distancia.',
+  recargoGranAsuncionPorPdv: 'Monto fijo en Gs. que se suma POR CADA PDV, en CADA ciclo, cuando la zona elegida en la cotización es "Gran Asunción".',
+  recargoInteriorPorPdv: 'Monto fijo en Gs. que se suma POR CADA PDV, en CADA ciclo, cuando la zona elegida en la cotización es "Interior". Suele ser mayor que el de Gran Asunción por la distancia.',
 
   // --- Configuración: Auditores y operación ---
   pdvPerAuditor: 'Cantidad de PDV que puede cubrir 1 solo auditor. Se usa únicamente cuando la cotización tiene el modo de auditores en "Automático": cantidad de auditores = PDV ÷ este número (redondeado siempre hacia arriba).',
@@ -1547,40 +1496,21 @@ const INFO_TEXTS = {
   modoCosteoPresentacion: '"Precio fijo": se cobra solo el monto configurado arriba. "Según horas hombre": se cobra según las horas reales de la tarea "Elaboración de presentación", a su perfil responsable. "Precio fijo + horas hombre": se suman ambos.',
 
   // --- Configuración: Comercial ---
-  gastosAdministrativosPercent: 'Porcentaje que se suma sobre el costo interno (mano de obra, traslados, viáticos, etc.) para cubrir gastos administrativos generales de la empresa (oficina, sistemas, etc.). Junto con "Contingencia", forma el "costo con gastos" sobre el que luego se aplica el margen.',
-  contingenciaPercent: 'Porcentaje adicional sobre el costo interno para cubrir imprevistos del proyecto (retrasos, PDV cerrados, cambios de último momento). Se suma junto con "Gastos administrativos".',
+  gastosAdministrativosMonto: 'Monto fijo en Gs. que se suma, por proyecto, para cubrir gastos administrativos generales de la empresa (oficina, sistemas, etc.). Junto con "Contingencia", forma el "costo con gastos" sobre el que luego se aplica el margen.',
+  contingenciaMonto: 'Monto fijo en Gs. que se suma, por proyecto, para cubrir imprevistos (retrasos, PDV cerrados, cambios de último momento). Se suma junto con "Gastos administrativos".',
   margenMinimoPercent: 'Porcentaje de margen que define el PRECIO MÍNIMO del rango comercial (el piso de negociación). Es el margen más ajustado que la empresa está dispuesta a aceptar.',
   margenRecomendadoPercent: 'Porcentaje de margen que define el PRECIO RECOMENDADO (objetivo comercial). Es el que se usa como "Total estimado" principal de la cotización.',
   margenMaximoPercent: 'Porcentaje de margen que define el PRECIO MÁXIMO sugerido del rango comercial. Útil como punto de partida para clientes con mayores exigencias, urgencia o poca sensibilidad al precio.',
 
   // --- Nueva cotización: Parámetros opcionales del proyecto ---
-  nivelComplejidad: 'Nivel de dificultad del relevamiento. "Medio" y "Alto" agregan el % de tiempo adicional configurado en Configuración de costos, aumentando las horas de campo (y por lo tanto el costo).',
-  rondasCorreccionSolicitadas: 'Cantidad de rondas de corrección del informe que el cliente puede solicitar. Si supera las "Rondas incluidas sin costo" configuradas, se cobra el excedente según las horas del analista configuradas.',
-  reunionesSolicitadas: 'Cantidad de reuniones con el cliente incluidas en el proyecto. Si supera las "Reuniones incluidas sin costo" configuradas, se cobra el excedente según las horas del coordinador configuradas.',
   requiereCapacitacionInicial: 'Si se marca, se suma UNA VEZ el costo de las horas de capacitación inicial al equipo de campo, configuradas en "Parámetros opcionales del proyecto", al costo hora del coordinador.',
   requiereSupervisionCampo: 'Si se marca, se suma el costo de supervisión en campo (horas configuradas × cantidad de ciclos), al costo hora del coordinador.',
   esUrgente: 'Si se marca, se aplica el "Recargo por urgencia" configurado sobre el costo con gastos, para reflejar el mayor esfuerzo de coordinar un proyecto con plazos comprimidos.',
 
   // --- Configuración: Parámetros opcionales del proyecto ---
-  complejidadMediaPercent: 'Porcentaje de tiempo adicional que se suma a las horas de campo cuando la cotización indica "Nivel de complejidad: Medio".',
-  complejidadAltaPercent: 'Porcentaje de tiempo adicional que se suma a las horas de campo cuando la cotización indica "Nivel de complejidad: Alto".',
   capacitacionInicialHoras: 'Cantidad de horas de capacitación/briefing inicial al equipo de campo, pagadas al costo hora del perfil "Coordinador de proyecto". Se cobra una sola vez, solo si se marca la opción en la cotización.',
   supervisionCampoHorasPorCiclo: 'Horas de supervisión en campo (por parte del coordinador) en CADA ciclo del proyecto. Se cobra solo si se marca la opción en la cotización.',
-  aplicarRevisitasPercent: 'Activa el recargo por "% de revisitas estimadas" en TODAS las cotizaciones (no es un toggle por cotización). Úselo si su operación habitualmente necesita repetir una parte de las visitas.',
-  revisitasPercent: 'Porcentaje que se suma a las horas de campo para compensar visitas que deben repetirse (mala carga de datos, PDV no disponible en el horario, etc.). Solo se aplica si "Activar % de revisitas" está marcado.',
-  aplicarAusenciasPercent: 'Activa el recargo por "% de ausencias o PDV cerrados" en TODAS las cotizaciones.',
-  ausenciasPercent: 'Porcentaje que se suma a las horas de campo para compensar PDV cerrados o encargados ausentes el día de la visita. Solo se aplica si "Activar % de ausencias" está marcado.',
-  correccionesRondasIncluidas: 'Cantidad de rondas de corrección del informe final que están incluidas SIN costo adicional en cualquier cotización.',
-  horasPorRondaCorreccionExtra: 'Horas del perfil "Analista" que insume CADA ronda de corrección adicional, más allá de las incluidas.',
-  reunionesIncluidas: 'Cantidad de reuniones con el cliente incluidas SIN costo adicional en cualquier cotización.',
-  horasPorReunionExtra: 'Horas del perfil "Coordinador de proyecto" que insume CADA reunión adicional, más allá de las incluidas.',
-  aplicarGastoTelefonia: 'Si se activa, TODAS las cotizaciones suman el gasto de telefonía/datos móviles configurado, multiplicado por la cantidad de relevadores/shoppers necesarios.',
-  gastoTelefoniaPorRelevador: 'Costo de telefonía/datos móviles por cada relevador o mystery shopper asignado al proyecto. Solo se cobra si "Activar gasto de telefonía" está marcado.',
-  aplicarCostoHerramientas: 'Si se activa, TODAS las cotizaciones suman el costo de herramientas/licencias configurado, una sola vez por proyecto.',
-  costoHerramientasLicencias: 'Costo único de herramientas o licencias de software necesarias para el proyecto (por ejemplo, una app de relevamiento). Solo se cobra si "Activar costo de herramientas" está marcado.',
-  aplicarOtrosGastosOperativos: 'Si se activa, TODAS las cotizaciones suman el monto de "Otros gastos operativos" configurado, una sola vez por proyecto.',
-  otrosGastosOperativosMonto: 'Monto libre para cualquier otro gasto operativo no contemplado en las demás categorías. Solo se cobra si "Activar otros gastos operativos" está marcado.',
-  recargoUrgenciaPercent: 'Porcentaje adicional que se suma sobre el costo con gastos (junto con gastos administrativos y contingencia) cuando la cotización marca "Proyecto urgente".',
+  recargoUrgenciaMonto: 'Monto fijo en Gs. que se suma (junto con gastos administrativos y contingencia) cuando la cotización marca "Proyecto urgente".',
   ivaPercent: 'Porcentaje de IVA que se aplica sobre el subtotal final, después de aplicar el descuento.',
   descuentoMaximoPercent: 'Porcentaje máximo de descuento que se puede aplicar en una cotización. Si en "Nueva cotización" se ingresa un descuento mayor a este valor, el sistema lo recorta automáticamente.',
 
@@ -1589,9 +1519,9 @@ const INFO_TEXTS = {
   horasPorVisitaPdv: 'Cantidad de horas que un auditor dedica, en promedio, a UNA visita a UN PDV. Se multiplica por la cantidad total de visitas del proyecto (PDV × visitas × ciclos) para obtener las horas-hombre totales.',
   aguinaldoPercent: 'Porcentaje que representa el aguinaldo (13er sueldo) sobre el costo de la hora hombre. Por ley equivale a 1/12 del salario, es decir, aproximadamente 8.33%. Se suma al costo por hora para reflejar el costo laboral real.',
   ipsPatronalPercent: 'Porcentaje de aporte patronal al IPS (Instituto de Previsión Social) sobre el costo de la hora hombre. Se suma al costo por hora, junto con el aguinaldo, para calcular el costo real de la mano de obra que se incluye en cada cotización.',
-  otrosCostosLaboralesPercent: 'Porcentaje adicional para cubrir otras cargas laborales (seguros, ropa de trabajo, equipamiento, etc.) que no sean aguinaldo ni IPS. Se suma al costo por hora del relevador.',
-  recargoNocturnoPercent: 'Porcentaje de recargo sobre el costo hora cargado (base + cargas sociales) cuando la cotización marca "Trabajo nocturno". Solo se aplica si esa opción está marcada.',
-  recargoFinDeSemanaPercent: 'Porcentaje de recargo sobre el costo hora cargado cuando la cotización marca "Fin de semana / feriado". Solo se aplica si esa opción está marcada. Se puede combinar con el recargo nocturno.',
+  otrosCostosLaboralesPorHora: 'Monto fijo en Gs. adicional por hora para cubrir otras cargas laborales (seguros, ropa de trabajo, equipamiento, etc.) que no sean aguinaldo ni IPS. Se suma al costo por hora del relevador.',
+  recargoNocturnoPorHora: 'Monto fijo en Gs. adicional, por hora, cuando la cotización marca "Trabajo nocturno". Solo se aplica si esa opción está marcada.',
+  recargoFinDeSemanaPorHora: 'Monto fijo en Gs. adicional, por hora, cuando la cotización marca "Fin de semana / feriado". Solo se aplica si esa opción está marcada. Se puede combinar con el recargo nocturno.',
 
   // --- Configuración: Tiempos de relevamiento — Auditoría en PDV ---
   auditPrepMinutos: 'Minutos fijos de ingreso, presentación y preparación al llegar a CADA PDV, antes de empezar a relevar productos.',
@@ -1836,9 +1766,6 @@ function leerInputsFormulario() {
     requiresPresentacion: f.requiresPresentacion.checked,
     requiresTrabajoNocturno: f.requiresTrabajoNocturno.checked,
     requiresFinDeSemana: f.requiresFinDeSemana.checked,
-    nivelComplejidad: f.nivelComplejidad.value,
-    rondasCorreccionSolicitadas: f.rondasCorreccionSolicitadas.value,
-    reunionesSolicitadas: f.reunionesSolicitadas.value,
     requiereCapacitacionInicial: f.requiereCapacitacionInicial.checked,
     requiereSupervisionCampo: f.requiereSupervisionCampo.checked,
     esUrgente: f.esUrgente.checked,
@@ -1890,7 +1817,7 @@ function construirBloqueRangoComercial(resultado, config) {
         <table class="breakdown-table">
           <tbody>
             <tr><td>Costo interno total</td><td>${formatearMoneda(desglose.costoInternoTotal, config.moneda)}</td></tr>
-            <tr><td>Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
+            <tr><td>Gastos administrativos + contingencia (Gs. fijos)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
             <tr class="subtotal-row"><td>Costo con gastos</td><td>${formatearMoneda(desglose.costoConGastos, config.moneda)}</td></tr>
           </tbody>
         </table>
@@ -2005,7 +1932,7 @@ function construirCuerpoResultadoAuditoria(resultado, config) {
             <tr><td>Recargo por visitas adicionales (por ciclo)</td><td>${formatearMoneda(desglose.recargoVisitasCiclo, config.moneda)}</td></tr>
             <tr><td>Subtotal por ciclo</td><td>${formatearMoneda(desglose.subtotalPorCiclo, config.moneda)}</td></tr>
             <tr><td>Subtotal recurrente (× ${ciclos} ciclos)</td><td>${formatearMoneda(desglose.subtotalRecurrente, config.moneda)}</td></tr>
-            <tr><td>Recargo de zona (${desglose.porcentajeZona.toFixed(2)}%)</td><td>${formatearMoneda(desglose.recargoZona, config.moneda)}</td></tr>
+            <tr><td>Recargo de zona (Gs. fijos por PDV, por ciclo)</td><td>${formatearMoneda(desglose.recargoZona, config.moneda)}</td></tr>
             <tr><td>Traslado</td><td>${formatearMoneda(desglose.costoTraslado, config.moneda)}</td></tr>
             <tr><td>Viáticos</td><td>${formatearMoneda(desglose.costoViaticos, config.moneda)}</td></tr>
             <tr><td>Alojamiento</td><td>${formatearMoneda(desglose.costoAlojamiento, config.moneda)}</td></tr>
@@ -2479,7 +2406,7 @@ function initConfiguracion() {
     const config = getConfig();
     config.officeProfiles.push({
       id: cryptoId(), nombre: 'Nuevo perfil', costoPorHora: 0,
-      aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPercent: 0,
+      aguinaldoPercent: 8.33, ipsPatronalPercent: 16.5, otrosCostosLaboralesPorHora: 0,
     });
     saveConfig(config);
     renderConfiguracion();
@@ -2539,7 +2466,7 @@ function renderTablaPerfiles(config) {
     const costoCargado = calcularCostoHoraCargado(p.costoPorHora, {
       aguinaldoPercent: p.aguinaldoPercent,
       ipsPatronalPercent: p.ipsPatronalPercent,
-      otrosCostosLaboralesPercent: p.otrosCostosLaboralesPercent,
+      otrosCostosLaboralesPorHora: p.otrosCostosLaboralesPorHora,
     }, {});
     return `
     <tr data-id="${p.id}">
@@ -2547,7 +2474,7 @@ function renderTablaPerfiles(config) {
       <td><input type="text" class="input-sm perfil-costo" value="${formatMilesDisplay(p.costoPorHora)}" inputmode="numeric"></td>
       <td><input type="number" class="input-sm perfil-aguinaldo" value="${p.aguinaldoPercent}" min="0" step="0.01"></td>
       <td><input type="number" class="input-sm perfil-ips" value="${p.ipsPatronalPercent}" min="0" step="0.5"></td>
-      <td><input type="number" class="input-sm perfil-otros" value="${p.otrosCostosLaboralesPercent}" min="0" step="0.5"></td>
+      <td><input type="text" class="input-sm perfil-otros" value="${formatMilesDisplay(p.otrosCostosLaboralesPorHora)}" inputmode="numeric"></td>
       <td class="muted">${formatearMoneda(costoCargado, config.moneda)}</td>
       <td class="col-actions">
         <button class="btn btn-tiny btn-secondary btn-guardar-perfil">Guardar</button>
@@ -2557,7 +2484,7 @@ function renderTablaPerfiles(config) {
   `;
   }).join('') || '<tr><td colspan="7" class="muted">No hay perfiles configurados. Agregue uno para empezar.</td></tr>';
 
-  tbody.querySelectorAll('.perfil-costo').forEach(attachMilesFormatting);
+  tbody.querySelectorAll('.perfil-costo, .perfil-otros').forEach(attachMilesFormatting);
 
   tbody.querySelectorAll('.btn-guardar-perfil').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -2569,7 +2496,7 @@ function renderTablaPerfiles(config) {
       perfil.costoPorHora = parseMilesValue(row.querySelector('.perfil-costo').value);
       perfil.aguinaldoPercent = Number(row.querySelector('.perfil-aguinaldo').value) || 0;
       perfil.ipsPatronalPercent = Number(row.querySelector('.perfil-ips').value) || 0;
-      perfil.otrosCostosLaboralesPercent = Number(row.querySelector('.perfil-otros').value) || 0;
+      perfil.otrosCostosLaboralesPorHora = parseMilesValue(row.querySelector('.perfil-otros').value);
       saveConfig(cfg);
       renderConfiguracion();
     });
@@ -2748,37 +2675,24 @@ function rellenarFormularioConfigGeneral(config) {
   CAMPOS_MONEDA_CONFIG.forEach((campo) => {
     f[campo].value = formatMilesDisplay(config[campo]);
   });
-  f.surchargeGranAsuncionPercent.value = config.surchargeGranAsuncionPercent;
-  f.surchargeInteriorPercent.value = config.surchargeInteriorPercent;
+  f.recargoGranAsuncionPorPdv.value = config.recargoGranAsuncionPorPdv;
+  f.recargoInteriorPorPdv.value = config.recargoInteriorPorPdv;
   f.pdvPerAuditor.value = config.pdvPerAuditor;
-  f.gastosAdministrativosPercent.value = config.gastosAdministrativosPercent;
-  f.contingenciaPercent.value = config.contingenciaPercent;
+  f.gastosAdministrativosMonto.value = config.gastosAdministrativosMonto;
+  f.contingenciaMonto.value = config.contingenciaMonto;
   f.margenMinimoPercent.value = config.margenMinimoPercent;
   f.margenRecomendadoPercent.value = config.margenRecomendadoPercent;
   f.margenMaximoPercent.value = config.margenMaximoPercent;
-  f.complejidadMediaPercent.value = config.complejidadMediaPercent;
-  f.complejidadAltaPercent.value = config.complejidadAltaPercent;
   f.capacitacionInicialHoras.value = config.capacitacionInicialHoras;
   f.supervisionCampoHorasPorCiclo.value = config.supervisionCampoHorasPorCiclo;
-  f.aplicarRevisitasPercent.checked = !!config.aplicarRevisitasPercent;
-  f.revisitasPercent.value = config.revisitasPercent;
-  f.aplicarAusenciasPercent.checked = !!config.aplicarAusenciasPercent;
-  f.ausenciasPercent.value = config.ausenciasPercent;
-  f.correccionesRondasIncluidas.value = config.correccionesRondasIncluidas;
-  f.horasPorRondaCorreccionExtra.value = config.horasPorRondaCorreccionExtra;
-  f.reunionesIncluidas.value = config.reunionesIncluidas;
-  f.horasPorReunionExtra.value = config.horasPorReunionExtra;
-  f.aplicarGastoTelefonia.checked = !!config.aplicarGastoTelefonia;
-  f.aplicarCostoHerramientas.checked = !!config.aplicarCostoHerramientas;
-  f.aplicarOtrosGastosOperativos.checked = !!config.aplicarOtrosGastosOperativos;
-  f.recargoUrgenciaPercent.value = config.recargoUrgenciaPercent;
+  f.recargoUrgenciaMonto.value = config.recargoUrgenciaMonto;
   f.ivaPercent.value = config.ivaPercent;
   f.descuentoMaximoPercent.value = config.descuentoMaximoPercent;
   f.aguinaldoPercent.value = config.aguinaldoPercent;
   f.ipsPatronalPercent.value = config.ipsPatronalPercent;
-  f.otrosCostosLaboralesPercent.value = config.otrosCostosLaboralesPercent;
-  f.recargoNocturnoPercent.value = config.recargoNocturnoPercent;
-  f.recargoFinDeSemanaPercent.value = config.recargoFinDeSemanaPercent;
+  f.otrosCostosLaboralesPorHora.value = config.otrosCostosLaboralesPorHora;
+  f.recargoNocturnoPorHora.value = config.recargoNocturnoPorHora;
+  f.recargoFinDeSemanaPorHora.value = config.recargoFinDeSemanaPorHora;
 
   // Tiempos de relevamiento — Auditoría en PDV (minutos y horas)
   f.auditPrepMinutos.value = config.auditPrepMinutos;
@@ -2812,37 +2726,24 @@ function guardarConfigGeneral() {
     modoCosteoInforme: f.modoCosteoInforme.value,
     modoCosteoDashboard: f.modoCosteoDashboard.value,
     modoCosteoPresentacion: f.modoCosteoPresentacion.value,
-    surchargeGranAsuncionPercent: Number(f.surchargeGranAsuncionPercent.value),
-    surchargeInteriorPercent: Number(f.surchargeInteriorPercent.value),
+    recargoGranAsuncionPorPdv: Number(f.recargoGranAsuncionPorPdv.value),
+    recargoInteriorPorPdv: Number(f.recargoInteriorPorPdv.value),
     pdvPerAuditor: Number(f.pdvPerAuditor.value),
-    gastosAdministrativosPercent: Number(f.gastosAdministrativosPercent.value),
-    contingenciaPercent: Number(f.contingenciaPercent.value),
+    gastosAdministrativosMonto: Number(f.gastosAdministrativosMonto.value),
+    contingenciaMonto: Number(f.contingenciaMonto.value),
     margenMinimoPercent: Number(f.margenMinimoPercent.value),
     margenRecomendadoPercent: Number(f.margenRecomendadoPercent.value),
     margenMaximoPercent: Number(f.margenMaximoPercent.value),
-    complejidadMediaPercent: Number(f.complejidadMediaPercent.value),
-    complejidadAltaPercent: Number(f.complejidadAltaPercent.value),
     capacitacionInicialHoras: Number(f.capacitacionInicialHoras.value),
     supervisionCampoHorasPorCiclo: Number(f.supervisionCampoHorasPorCiclo.value),
-    aplicarRevisitasPercent: f.aplicarRevisitasPercent.checked,
-    revisitasPercent: Number(f.revisitasPercent.value),
-    aplicarAusenciasPercent: f.aplicarAusenciasPercent.checked,
-    ausenciasPercent: Number(f.ausenciasPercent.value),
-    correccionesRondasIncluidas: Number(f.correccionesRondasIncluidas.value),
-    horasPorRondaCorreccionExtra: Number(f.horasPorRondaCorreccionExtra.value),
-    reunionesIncluidas: Number(f.reunionesIncluidas.value),
-    horasPorReunionExtra: Number(f.horasPorReunionExtra.value),
-    aplicarGastoTelefonia: f.aplicarGastoTelefonia.checked,
-    aplicarCostoHerramientas: f.aplicarCostoHerramientas.checked,
-    aplicarOtrosGastosOperativos: f.aplicarOtrosGastosOperativos.checked,
-    recargoUrgenciaPercent: Number(f.recargoUrgenciaPercent.value),
+    recargoUrgenciaMonto: Number(f.recargoUrgenciaMonto.value),
     ivaPercent: Number(f.ivaPercent.value),
     descuentoMaximoPercent: Number(f.descuentoMaximoPercent.value),
     aguinaldoPercent: Number(f.aguinaldoPercent.value),
     ipsPatronalPercent: Number(f.ipsPatronalPercent.value),
-    otrosCostosLaboralesPercent: Number(f.otrosCostosLaboralesPercent.value),
-    recargoNocturnoPercent: Number(f.recargoNocturnoPercent.value),
-    recargoFinDeSemanaPercent: Number(f.recargoFinDeSemanaPercent.value),
+    otrosCostosLaboralesPorHora: Number(f.otrosCostosLaboralesPorHora.value),
+    recargoNocturnoPorHora: Number(f.recargoNocturnoPorHora.value),
+    recargoFinDeSemanaPorHora: Number(f.recargoFinDeSemanaPorHora.value),
 
     auditPrepMinutos: Number(f.auditPrepMinutos.value),
     auditMinutosPorProducto: Number(f.auditMinutosPorProducto.value),
@@ -2869,16 +2770,11 @@ function guardarConfigGeneral() {
   });
 
   const camposNumericos = [
-    ...CAMPOS_MONEDA_CONFIG, 'surchargeGranAsuncionPercent',
-    'surchargeInteriorPercent', 'pdvPerAuditor', 'gastosAdministrativosPercent',
-    'contingenciaPercent', 'margenMinimoPercent', 'margenRecomendadoPercent', 'margenMaximoPercent',
-    'complejidadMediaPercent', 'complejidadAltaPercent', 'capacitacionInicialHoras',
-    'supervisionCampoHorasPorCiclo', 'revisitasPercent', 'ausenciasPercent',
-    'correccionesRondasIncluidas', 'horasPorRondaCorreccionExtra', 'reunionesIncluidas',
-    'horasPorReunionExtra', 'recargoUrgenciaPercent',
+    ...CAMPOS_MONEDA_CONFIG, 'pdvPerAuditor',
+    'margenMinimoPercent', 'margenRecomendadoPercent', 'margenMaximoPercent',
+    'capacitacionInicialHoras', 'supervisionCampoHorasPorCiclo',
     'ivaPercent', 'descuentoMaximoPercent',
-    'aguinaldoPercent', 'ipsPatronalPercent', 'otrosCostosLaboralesPercent',
-    'recargoNocturnoPercent', 'recargoFinDeSemanaPercent',
+    'aguinaldoPercent', 'ipsPatronalPercent',
     'auditPrepMinutos', 'auditMinutosPorProducto', 'auditMinutosEvidenciaPorProducto',
     'auditMinutosCierreFormulario', 'auditMinutosEsperaPromedio', 'auditMinutosTrasladoEntrePdv',
     'auditJornadaEfectivaHoras',
@@ -3134,7 +3030,7 @@ function construirHtmlPreviewAuditoria(resultado, config, numero, tipo) {
           <tr><td>Subtotal recurrente (precio de escala + recargos)</td><td>${formatearMoneda(desglose.subtotalRecurrente, config.moneda)}</td></tr>
           <tr><td>Recargo de zona</td><td>${formatearMoneda(desglose.recargoZona, config.moneda)}</td></tr>
           <tr><td>Costo interno total (mano de obra, operativos, servicios)</td><td>${formatearMoneda(desglose.costoInternoTotal, config.moneda)}</td></tr>
-          <tr><td>Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
+          <tr><td>Gastos administrativos + contingencia (Gs. fijos)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
           <tr class="subtotal-row"><td>Costo con gastos</td><td>${formatearMoneda(desglose.costoConGastos, config.moneda)}</td></tr>
         </tbody>
       </table>
@@ -3225,7 +3121,7 @@ function construirHtmlPreviewMysteryShopper(resultado, config, numero, tipo) {
           <tr><td>Mano de obra — canales remotos</td><td>${formatearMoneda(desglose.costoRemotoManoObra, config.moneda)}</td></tr>
           <tr><td>Coordinación y análisis</td><td>${formatearMoneda(desglose.costoCoordinacion, config.moneda)}</td></tr>
           <tr class="subtotal-row"><td>Costo interno total</td><td>${formatearMoneda(desglose.costoInternoTotal, config.moneda)}</td></tr>
-          <tr><td>Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
+          <tr><td>Gastos administrativos + contingencia (Gs. fijos)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
           <tr class="subtotal-row"><td>Costo con gastos</td><td>${formatearMoneda(desglose.costoConGastos, config.moneda)}</td></tr>
         </tbody>
       </table>
@@ -3360,9 +3256,9 @@ function generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo) {
     addRow('Precio base por ciclo (escala)', formatearMoneda(desglose.precioBaseCiclo, config.moneda));
     addRow('Recargo productos/visitas adicionales (por ciclo)', formatearMoneda(desglose.recargoProductosCiclo + desglose.recargoVisitasCiclo, config.moneda));
     addRow(`Subtotal recurrente (x${ciclos})`, formatearMoneda(desglose.subtotalRecurrente, config.moneda));
-    addRow(`Recargo de zona (${desglose.porcentajeZona.toFixed(2)}%)`, formatearMoneda(desglose.recargoZona, config.moneda));
+    addRow('Recargo de zona (Gs. fijos por PDV, por ciclo)', formatearMoneda(desglose.recargoZona, config.moneda));
     addRow('Costo interno total (mano de obra, operativos, servicios)', formatearMoneda(desglose.costoInternoTotal, config.moneda));
-    addRow(`Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)`, formatearMoneda(desglose.montoGastosYContingencia, config.moneda));
+    addRow('Gastos administrativos + contingencia (Gs. fijos)', formatearMoneda(desglose.montoGastosYContingencia, config.moneda));
     addRow('Costo con gastos', formatearMoneda(desglose.costoConGastos, config.moneda));
     y = ctx.getY() + 8; ctx.setY(y);
 
@@ -3433,7 +3329,7 @@ function generarCuerpoPdfMysteryShopper(ctx, resultado, config, numero, tipo) {
     addRow('Mano de obra — canales remotos', formatearMoneda(desglose.costoRemotoManoObra, config.moneda));
     addRow('Coordinación y análisis', formatearMoneda(desglose.costoCoordinacion, config.moneda));
     addRow('Costo interno total', formatearMoneda(desglose.costoInternoTotal, config.moneda));
-    addRow(`Gastos administrativos + contingencia (${(desglose.gastosAdministrativosPercent + desglose.contingenciaPercent).toFixed(1)}%)`, formatearMoneda(desglose.montoGastosYContingencia, config.moneda));
+    addRow('Gastos administrativos + contingencia (Gs. fijos)', formatearMoneda(desglose.montoGastosYContingencia, config.moneda));
     addRow('Costo con gastos', formatearMoneda(desglose.costoConGastos, config.moneda));
     y = ctx.getY() + 8; ctx.setY(y);
 
