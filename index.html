@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Cotizador de Auditorías en PDV</title>
-<link rel="stylesheet" href="styles.css?v=15">
+<link rel="stylesheet" href="styles.css?v=16">
 <!-- jsPDF vía CDN, para generar cotizaciones en PDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
@@ -109,9 +109,13 @@
 
         <fieldset class="form-section">
           <legend>Tipo de servicio</legend>
-          <div class="form-field">
-            <label for="serviceType">Tipo de servicio <button type="button" class="info-icon" data-info="serviceType" aria-label="Información">i</button></label>
-            <select id="serviceType" name="serviceType">
+          <div class="form-field form-field-full">
+            <label>Seleccione el servicio <button type="button" class="info-icon" data-info="serviceType" aria-label="Información">i</button></label>
+            <div class="choice-button-group" id="serviceTypeButtons">
+              <button type="button" class="choice-button active" data-value="auditoria">🔍 Auditoría en punto de venta</button>
+              <button type="button" class="choice-button" data-value="mysteryShopper">🕵️ Mystery Shopper</button>
+            </div>
+            <select id="serviceType" name="serviceType" class="visually-hidden-select" tabindex="-1" aria-hidden="true">
               <option value="auditoria">Auditoría en punto de venta</option>
               <option value="mysteryShopper">Mystery Shopper</option>
             </select>
@@ -120,6 +124,16 @@
 
         <fieldset class="form-section" id="fieldsetAuditoria">
           <legend>Alcance del servicio — Auditoría en PDV</legend>
+
+          <div class="form-field form-field-full">
+            <label>Tipo de negocio *</label>
+            <div class="choice-button-group" id="auditBusinessButtons">
+              <button type="button" class="choice-button active" data-value="farmacia">💊 Farmacia</button>
+              <button type="button" class="choice-button" data-value="biggie">🏪 Biggie</button>
+              <button type="button" class="choice-button" data-value="supermercado">🛒 Supermercado</button>
+            </div>
+            <input type="hidden" id="auditBusinessType" name="auditBusinessType" value="farmacia">
+          </div>
 
           <div class="form-field">
             <label for="pdvCount">Cantidad de puntos de venta (PDV) * <button type="button" class="info-icon" data-info="pdvCount" aria-label="Información">i</button></label>
@@ -326,6 +340,15 @@
                 <option value="auditoria">Auditoría en punto de venta</option>
                 <option value="mysteryShopper">Mystery Shopper</option>
               </select>
+            </div>
+            <div class="form-field form-field-full" id="rapidoBusinessWrapper">
+              <label>Tipo de negocio</label>
+              <div class="choice-button-group" id="rapidoBusinessButtons">
+                <button type="button" class="choice-button active" data-value="farmacia">💊 Farmacia</button>
+                <button type="button" class="choice-button" data-value="biggie">🏪 Biggie</button>
+                <button type="button" class="choice-button" data-value="supermercado">🛒 Supermercado</button>
+              </div>
+              <input type="hidden" id="rapidoAuditBusinessType" value="farmacia">
             </div>
           </fieldset>
 
@@ -597,7 +620,24 @@
         <p class="muted">Todos los valores aquí son <strong>VALORES DE EJEMPLO</strong>. Edítelos según sus tarifas reales.</p>
       </div>
 
-      <details class="service-accordion" open>
+      <div class="card config-selector-card">
+        <h2>Servicio</h2>
+        <div class="choice-button-group" id="configServiceButtons">
+          <button type="button" class="choice-button active" data-value="auditoria">🔍 Auditoría en punto de venta</button>
+          <button type="button" class="choice-button" data-value="mysteryShopper">🕵️ Mystery Shopper</button>
+        </div>
+        <div id="configAuditBusinessSelector">
+          <h3>Negocio de Auditoría</h3>
+          <div class="choice-button-group" id="configAuditBusinessButtons">
+            <button type="button" class="choice-button active" data-value="farmacia">💊 Farmacia</button>
+            <button type="button" class="choice-button" data-value="biggie">🏪 Biggie</button>
+            <button type="button" class="choice-button" data-value="supermercado">🛒 Supermercado</button>
+          </div>
+          <p class="muted small-note" id="configBusinessHelp">Editando costos operativos y escalas de Farmacia.</p>
+        </div>
+      </div>
+
+      <details class="service-accordion" id="configAuditScalesSection" open>
         <summary>🔍 Auditoría en punto de venta</summary>
         <div class="service-accordion-body">
       <div class="card">
@@ -632,7 +672,7 @@
 
       <form id="formConfigGeneral" class="card form-grid">
 
-        <details class="service-accordion form-field-full" open>
+        <details class="service-accordion form-field-full" id="configAuditParamsSection" open>
           <summary>🔍 Parámetros — Auditoría en punto de venta</summary>
           <div class="service-accordion-body form-grid">
         <fieldset class="form-section">
@@ -828,7 +868,7 @@
           </div>
         </details>
 
-        <details class="service-accordion form-field-full">
+        <details class="service-accordion form-field-full" id="configMysteryParamsSection">
           <summary>🕵️ Parámetros — Mystery Shopper</summary>
           <div class="service-accordion-body form-grid">
         <fieldset class="form-section">
@@ -1045,8 +1085,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js"></script>
 <script src="supabase-config.js"></script>
 <script src="supabase-client.js"></script>
-<script src="supabase-data.js?v=18"></script>
+<script src="supabase-data.js?v=19"></script>
 <script src="auth.js"></script>
-<script src="app.js?v=21"></script>
+<script src="app.js?v=22"></script>
 </body>
 </html>

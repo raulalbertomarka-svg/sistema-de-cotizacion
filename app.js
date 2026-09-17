@@ -29,6 +29,37 @@ const CONFIG_CLOUD_STATE = {
   timer: null,
 };
 
+const AUDIT_BUSINESS_LABELS = {
+  farmacia: 'Farmacia',
+  biggie: 'Biggie',
+  supermercado: 'Supermercado',
+};
+
+const AUDIT_BUSINESS_KEYS = Object.keys(AUDIT_BUSINESS_LABELS);
+
+// Únicamente estos parámetros se separan por tipo de negocio. Los márgenes,
+// IVA, gastos administrativos, contingencia y tareas de oficina siguen siendo
+// globales para todo el sistema.
+const AUDIT_OPERATIONAL_FIELDS = [
+  'pricingMode', 'productsIncludedInBase', 'extraProductSurcharge',
+  'recargoGranAsuncionPorPdv', 'recargoInteriorPorPdv', 'pdvPerAuditor',
+  'costoTraslado', 'viaticoPorAuditorPorDia', 'alojamientoPorAuditorPorNoche',
+  'costoVisitaAdicional', 'costoEvidenciaFotografica', 'costoInformeFinal',
+  'costoDashboard', 'costoPresentacion', 'modoCosteoInforme',
+  'modoCosteoDashboard', 'modoCosteoPresentacion', 'capacitacionInicialHoras',
+  'supervisionCampoHorasPorCiclo', 'costoPorHoraHombre', 'aguinaldoPercent',
+  'ipsPatronalPercent', 'otrosCostosLaboralesPorHora', 'recargoNocturnoPorHora',
+  'recargoFinDeSemanaPorHora', 'auditPrepMinutos', 'auditMinutosPorProducto',
+  'auditMinutosEvidenciaPorProducto', 'auditMinutosCierreFormulario',
+  'auditMinutosEsperaPromedio', 'auditMinutosTrasladoEntrePdv',
+  'auditJornadaEfectivaHoras',
+];
+
+const CONFIG_UI_STATE = {
+  servicio: 'auditoria',
+  negocioAuditoria: 'farmacia',
+};
+
 /**
  * Valores de ejemplo. NO SON PRECIOS REALES DE MERCADO.
  * El usuario debe editarlos desde "Configuración de costos".
@@ -172,6 +203,10 @@ function getDefaultConfig() {
       { id: cryptoId(), tipo: 'correcciones', nombre: 'Correcciones solicitadas por el cliente', perfilId: 'perfil_analista', horasBase: 2, horasPorPdv: 0, horasPorCada100Productos: 0, horasPorCiclo: 0, revisionesIncluidas: 1, aplicaA: 'ambos', condicionA: null, activa: true },
     ],
 
+    // Se completa automáticamente al migrar para conservar configuraciones
+    // antiguas y crear Farmacia, Biggie y Supermercado con los valores actuales.
+    auditBusinessConfigs: null,
+
     moneda: 'PYG',
   };
 }
@@ -249,7 +284,43 @@ function migrarConfiguracion(config) {
     huboCambios = true;
   }
 
+  if (!migrada.auditBusinessConfigs || typeof migrada.auditBusinessConfigs !== 'object') {
+    migrada.auditBusinessConfigs = {};
+    huboCambios = true;
+  }
+  AUDIT_BUSINESS_KEYS.forEach((negocio) => {
+    if (!migrada.auditBusinessConfigs[negocio]) {
+      migrada.auditBusinessConfigs[negocio] = crearConfigOperativaAuditoria(migrada);
+      huboCambios = true;
+    }
+  });
+
   return { config: migrada, huboCambios };
+}
+
+function crearConfigOperativaAuditoria(base) {
+  const resultado = {};
+  AUDIT_OPERATIONAL_FIELDS.forEach((campo) => {
+    resultado[campo] = base[campo];
+  });
+  resultado.scales = (base.scales || []).map((escala) => ({
+    ...escala,
+    id: cryptoId(),
+  }));
+  return resultado;
+}
+
+function obtenerConfigNegocioAuditoria(config, negocio) {
+  const clave = AUDIT_BUSINESS_KEYS.includes(negocio) ? negocio : 'farmacia';
+  return config.auditBusinessConfigs?.[clave] || crearConfigOperativaAuditoria(config);
+}
+
+function configParaCotizacion(config, inputs) {
+  if (esMysteryShopper(inputs) || !inputs.auditBusinessType) return config;
+  return {
+    ...config,
+    ...obtenerConfigNegocioAuditoria(config, inputs.auditBusinessType),
+  };
 }
 
 function cryptoId() {
@@ -260,7 +331,7 @@ function getConfig() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.CONFIG);
     if (!raw) {
-      const def = getDefaultConfig();
+      const { config: def } = migrarConfiguracion(getDefaultConfig());
       saveConfig(def);
       return def;
     }
@@ -979,6 +1050,10 @@ const SERVICE_TYPE_LABELS = {
   mysteryShopper: 'Mystery Shopper',
 };
 
+function etiquetaNegocioAuditoria(inputs) {
+  return AUDIT_BUSINESS_LABELS[inputs?.auditBusinessType] || 'Sin categoría';
+}
+
 /** Determina si una cotización corresponde al servicio de Mystery Shopper. */
 function esMysteryShopper(inputs) {
   return inputs.serviceType === 'mysteryShopper';
@@ -994,7 +1069,7 @@ function calcularCotizacion(inputs, config) {
   if (esMysteryShopper(inputs)) {
     return calcularMysteryShopper(inputs, config);
   }
-  return calcularAuditoriaPDV(inputs, config);
+  return calcularAuditoriaPDV(inputs, configParaCotizacion(config, inputs));
 }
 
 /**
@@ -1405,6 +1480,9 @@ function validarFormularioCotizacion(inputs) {
     }
   } else {
     // --- Validaciones específicas de Auditoría en PDV ---
+    if (!AUDIT_BUSINESS_KEYS.includes(inputs.auditBusinessType)) {
+      errores.push('Debe seleccionar el tipo de negocio: Farmacia, Biggie o Supermercado.');
+    }
     if (!inputs.pdvCount || Number(inputs.pdvCount) <= 0) {
       errores.push('La cantidad de puntos de venta (PDV) debe ser mayor que cero.');
     }
@@ -1890,6 +1968,11 @@ function initFormularioCotizacion() {
     actualizarCamposPorTipoServicio(e.target.value);
   });
 
+  enlazarGrupoBotones('serviceTypeButtons', 'serviceType', (valor) => {
+    actualizarCamposPorTipoServicio(valor);
+  });
+  enlazarGrupoBotones('auditBusinessButtons', 'auditBusinessType');
+
   document.getElementById('zone').addEventListener('change', (e) => {
     const showDept = e.target.value === 'interior' || e.target.value === 'granAsuncion';
     const showSplit = e.target.value === 'combinada';
@@ -1930,6 +2013,9 @@ function limpiarFormularioCotizacion() {
   });
   formulario.elements.extraCostManual.value = '0';
   formulario.elements.serviceType.value = 'auditoria';
+  formulario.elements.auditBusinessType.value = 'farmacia';
+  actualizarBotonesSeleccion('serviceTypeButtons', 'auditoria');
+  actualizarBotonesSeleccion('auditBusinessButtons', 'farmacia');
   document.getElementById('quoteDate').valueAsDate = new Date();
   document.getElementById('resultadoWrapper').innerHTML = '';
   document.getElementById('formErrors').style.display = 'none';
@@ -1954,6 +2040,27 @@ function actualizarCamposPorTipoServicio(tipo) {
   document.getElementById('fieldsetAuditoria').style.display = esMS ? 'none' : '';
   document.getElementById('fieldsetServiciosAdicionales').style.display = '';
   document.getElementById('fieldsetMysteryShopper').style.display = esMS ? '' : 'none';
+  actualizarBotonesSeleccion('serviceTypeButtons', esMS ? 'mysteryShopper' : 'auditoria');
+}
+
+function actualizarBotonesSeleccion(grupoId, valor) {
+  document.querySelectorAll(`#${grupoId} .choice-button`).forEach((boton) => {
+    boton.classList.toggle('active', boton.dataset.value === valor);
+    boton.setAttribute('aria-pressed', boton.dataset.value === valor ? 'true' : 'false');
+  });
+}
+
+function enlazarGrupoBotones(grupoId, inputId, alCambiar) {
+  const grupo = document.getElementById(grupoId);
+  const input = document.getElementById(inputId);
+  if (!grupo || !input) return;
+  grupo.querySelectorAll('.choice-button').forEach((boton) => {
+    boton.addEventListener('click', () => {
+      input.value = boton.dataset.value;
+      actualizarBotonesSeleccion(grupoId, boton.dataset.value);
+      if (alCambiar) alCambiar(boton.dataset.value);
+    });
+  });
 }
 
 function leerInputsFormulario() {
@@ -1967,6 +2074,7 @@ function leerInputsFormulario() {
     notes: f.notes.value,
 
     serviceType: f.serviceType.value,
+    auditBusinessType: f.auditBusinessType.value,
     pdvCount: f.pdvCount.value,
     productsPerPdv: f.productsPerPdv.value,
     visitsPerPdv: f.visitsPerPdv.value,
@@ -2324,7 +2432,7 @@ function renderResultado(resultado, config) {
       <div class="result-header">
         <div>
           <h2>Cotización ${numeroCotizacion}</h2>
-          <p class="muted">${textoSeguro(inputs.clientName)} · ${textoSeguro(SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType)} · ${textoSeguro(inputs.projectName || 'Sin nombre de proyecto')}</p>
+          <p class="muted">${textoSeguro(inputs.clientName)} · ${textoSeguro(SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType)}${esMS ? '' : ` · ${textoSeguro(etiquetaNegocioAuditoria(inputs))}`} · ${textoSeguro(inputs.projectName || 'Sin nombre de proyecto')}</p>
         </div>
         <div class="total-badge">
           <span class="total-label">Total estimado</span>
@@ -2507,7 +2615,9 @@ function initCalculoRapido() {
     const esMS = e.target.value === 'mysteryShopper';
     document.getElementById('rapidoFieldsetAuditoria').style.display = esMS ? 'none' : '';
     document.getElementById('rapidoFieldsetMysteryShopper').style.display = esMS ? '' : 'none';
+    document.getElementById('rapidoBusinessWrapper').style.display = esMS ? 'none' : '';
   });
+  enlazarGrupoBotones('rapidoBusinessButtons', 'rapidoAuditBusinessType');
 
   document.getElementById('rapidoZone').addEventListener('change', (e) => {
     const showDept = e.target.value === 'interior' || e.target.value === 'granAsuncion';
@@ -2522,6 +2632,9 @@ function initCalculoRapido() {
     document.getElementById('rapidoZoneSplitWrapper').style.display = 'none';
     document.getElementById('rapidoFieldsetAuditoria').style.display = '';
     document.getElementById('rapidoFieldsetMysteryShopper').style.display = 'none';
+    document.getElementById('rapidoAuditBusinessType').value = 'farmacia';
+    document.getElementById('rapidoBusinessWrapper').style.display = '';
+    actualizarBotonesSeleccion('rapidoBusinessButtons', 'farmacia');
     document.getElementById('resultadoRapidoWrapper').innerHTML = '';
   });
 }
@@ -2565,6 +2678,7 @@ function construirInputsCalculoRapido() {
 
   return {
     ...base,
+    auditBusinessType: document.getElementById('rapidoAuditBusinessType').value,
     pdvCount: document.getElementById('rapidoPdvCount').value,
     productsPerPdv: document.getElementById('rapidoProductsPerPdv').value || 0,
     visitsPerPdv: document.getElementById('rapidoVisitsPerPdv').value || 1,
@@ -2619,7 +2733,7 @@ function renderResultadoRapido(resultado, config, inputs) {
 
   const subtitulo = esMS
     ? `${inputs.msAseguradorasCount || 0} empresas · ${inputs.msSucursalesPresencial || 0} sucursales`
-    : `${Number(inputs.pdvCount) || 0} PDV · ${textoSeguro(ZONA_LABELS[inputs.zone] || inputs.zone)}${inputs.department ? ' - ' + textoSeguro(inputs.department) : ''}`;
+    : `${textoSeguro(etiquetaNegocioAuditoria(inputs))} · ${Number(inputs.pdvCount) || 0} PDV · ${textoSeguro(ZONA_LABELS[inputs.zone] || inputs.zone)}${inputs.department ? ' - ' + textoSeguro(inputs.department) : ''}`;
 
   const horasCampo = esMS ? desglose.horasHombreCampo : desglose.horasHombreTotales;
   const dotacion = esMS ? desglose.shoppersNecesarios : desglose.relevadoresRecomendados;
@@ -2690,6 +2804,8 @@ function precargarFormularioDesdeInputs(inputs) {
   }
   actualizarCamposPorTipoServicio(inputs.serviceType === 'mysteryShopper' ? 'mysteryShopper' : 'auditoria');
   f.serviceType.value = inputs.serviceType === 'mysteryShopper' ? 'mysteryShopper' : 'auditoria';
+  f.auditBusinessType.value = AUDIT_BUSINESS_KEYS.includes(inputs.auditBusinessType) ? inputs.auditBusinessType : 'farmacia';
+  actualizarBotonesSeleccion('auditBusinessButtons', f.auditBusinessType.value);
   attachMilesFormatting(document.getElementById('extraCostManual'));
   document.getElementById('departmentWrapper').style.display =
     (inputs.zone === 'interior' || inputs.zone === 'granAsuncion') ? 'block' : 'none';
@@ -2704,9 +2820,24 @@ function precargarFormularioDesdeInputs(inputs) {
    ========================================================================== */
 
 function initConfiguracion() {
+  document.querySelectorAll('#configServiceButtons .choice-button').forEach((boton) => {
+    boton.addEventListener('click', () => {
+      CONFIG_UI_STATE.servicio = boton.dataset.value;
+      renderConfiguracion();
+    });
+  });
+  document.querySelectorAll('#configAuditBusinessButtons .choice-button').forEach((boton) => {
+    boton.addEventListener('click', () => {
+      CONFIG_UI_STATE.negocioAuditoria = boton.dataset.value;
+      renderConfiguracion();
+    });
+  });
+
   document.getElementById('btnAgregarEscala').addEventListener('click', () => {
     const config = getConfig();
-    config.scales.push({ id: cryptoId(), min: 0, max: 0, precioMinimo: 0, precioRecomendado: 0, precioMaximo: 0, productsIncluidos: 50 });
+    const negocio = obtenerConfigNegocioAuditoria(config, CONFIG_UI_STATE.negocioAuditoria);
+    negocio.scales.push({ id: cryptoId(), min: 0, max: 0, precioMinimo: 0, precioRecomendado: 0, precioMaximo: 0, productsIncluidos: 50 });
+    config.auditBusinessConfigs[CONFIG_UI_STATE.negocioAuditoria] = negocio;
     saveConfig(config);
     renderConfiguracion();
   });
@@ -2756,8 +2887,18 @@ function initConfiguracion() {
 
 function renderConfiguracion() {
   const config = getConfig();
-  renderTablaEscalas(config);
-  rellenarFormularioConfigGeneral(config);
+  const esAuditoria = CONFIG_UI_STATE.servicio === 'auditoria';
+  const configNegocio = obtenerConfigNegocioAuditoria(config, CONFIG_UI_STATE.negocioAuditoria);
+  actualizarBotonesSeleccion('configServiceButtons', CONFIG_UI_STATE.servicio);
+  actualizarBotonesSeleccion('configAuditBusinessButtons', CONFIG_UI_STATE.negocioAuditoria);
+  document.getElementById('configAuditBusinessSelector').style.display = esAuditoria ? '' : 'none';
+  document.getElementById('configAuditScalesSection').style.display = esAuditoria ? '' : 'none';
+  document.getElementById('configAuditParamsSection').style.display = esAuditoria ? '' : 'none';
+  document.getElementById('configMysteryParamsSection').style.display = esAuditoria ? 'none' : '';
+  document.getElementById('configBusinessHelp').textContent =
+    `Editando costos operativos y escalas de ${AUDIT_BUSINESS_LABELS[CONFIG_UI_STATE.negocioAuditoria]}.`;
+  renderTablaEscalas(config, configNegocio);
+  rellenarFormularioConfigGeneral(config, configNegocio);
   renderTablaPerfiles(config);
   renderTablaTareas(config);
 }
@@ -2898,10 +3039,10 @@ function renderTablaTareas(config) {
   });
 }
 
-function renderTablaEscalas(config) {
+function renderTablaEscalas(config, configNegocio = obtenerConfigNegocioAuditoria(config, CONFIG_UI_STATE.negocioAuditoria)) {
   const tbody = document.getElementById('tablaEscalasBody');
-  const scales = escalasOrdenadas(config.scales);
-  const { errores, advertencias } = validarEscalas(config.scales);
+  const scales = escalasOrdenadas(configNegocio.scales);
+  const { errores, advertencias } = validarEscalas(configNegocio.scales);
 
   tbody.innerHTML = scales.map((s) => `
     <tr data-id="${s.id}">
@@ -2926,13 +3067,15 @@ function renderTablaEscalas(config) {
       const row = e.target.closest('tr');
       const id = row.getAttribute('data-id');
       const cfg = getConfig();
-      const scale = cfg.scales.find((s) => s.id === id);
+      const negocio = obtenerConfigNegocioAuditoria(cfg, CONFIG_UI_STATE.negocioAuditoria);
+      const scale = negocio.scales.find((s) => s.id === id);
       scale.min = Number(row.querySelector('.escala-min').value);
       scale.max = Number(row.querySelector('.escala-max').value);
       scale.productsIncluidos = Number(row.querySelector('.escala-products').value) || 0;
       scale.precioMinimo = parseMilesValue(row.querySelector('.escala-precio-min').value);
       scale.precioRecomendado = parseMilesValue(row.querySelector('.escala-precio-rec').value);
       scale.precioMaximo = parseMilesValue(row.querySelector('.escala-precio-max').value);
+      cfg.auditBusinessConfigs[CONFIG_UI_STATE.negocioAuditoria] = negocio;
       saveConfig(cfg);
       renderConfiguracion();
     });
@@ -2943,9 +3086,11 @@ function renderTablaEscalas(config) {
       const row = e.target.closest('tr');
       const id = row.getAttribute('data-id');
       const cfg = getConfig();
-      const original = cfg.scales.find((s) => s.id === id);
+      const negocio = obtenerConfigNegocioAuditoria(cfg, CONFIG_UI_STATE.negocioAuditoria);
+      const original = negocio.scales.find((s) => s.id === id);
       const copia = { ...original, id: cryptoId(), min: original.max + 1, max: original.max + 10 };
-      cfg.scales.push(copia);
+      negocio.scales.push(copia);
+      cfg.auditBusinessConfigs[CONFIG_UI_STATE.negocioAuditoria] = negocio;
       saveConfig(cfg);
       renderConfiguracion();
     });
@@ -2957,7 +3102,9 @@ function renderTablaEscalas(config) {
       const row = e.target.closest('tr');
       const id = row.getAttribute('data-id');
       const cfg = getConfig();
-      cfg.scales = cfg.scales.filter((s) => s.id !== id);
+      const negocio = obtenerConfigNegocioAuditoria(cfg, CONFIG_UI_STATE.negocioAuditoria);
+      negocio.scales = negocio.scales.filter((s) => s.id !== id);
+      cfg.auditBusinessConfigs[CONFIG_UI_STATE.negocioAuditoria] = negocio;
       saveConfig(cfg);
       renderConfiguracion();
     });
@@ -2975,42 +3122,43 @@ function renderTablaEscalas(config) {
   }
 }
 
-function rellenarFormularioConfigGeneral(config) {
+function rellenarFormularioConfigGeneral(config, configNegocio = obtenerConfigNegocioAuditoria(config, CONFIG_UI_STATE.negocioAuditoria)) {
   const f = document.getElementById('formConfigGeneral');
-  f.pricingMode.value = config.pricingMode;
-  f.modoCosteoInforme.value = config.modoCosteoInforme;
-  f.modoCosteoDashboard.value = config.modoCosteoDashboard;
-  f.modoCosteoPresentacion.value = config.modoCosteoPresentacion;
+  f.pricingMode.value = configNegocio.pricingMode;
+  f.modoCosteoInforme.value = configNegocio.modoCosteoInforme;
+  f.modoCosteoDashboard.value = configNegocio.modoCosteoDashboard;
+  f.modoCosteoPresentacion.value = configNegocio.modoCosteoPresentacion;
   CAMPOS_MONEDA_CONFIG.forEach((campo) => {
-    f[campo].value = formatMilesDisplay(config[campo]);
+    const origen = AUDIT_OPERATIONAL_FIELDS.includes(campo) ? configNegocio : config;
+    f[campo].value = formatMilesDisplay(origen[campo]);
   });
-  f.recargoGranAsuncionPorPdv.value = config.recargoGranAsuncionPorPdv;
-  f.recargoInteriorPorPdv.value = config.recargoInteriorPorPdv;
-  f.pdvPerAuditor.value = config.pdvPerAuditor;
+  f.recargoGranAsuncionPorPdv.value = configNegocio.recargoGranAsuncionPorPdv;
+  f.recargoInteriorPorPdv.value = configNegocio.recargoInteriorPorPdv;
+  f.pdvPerAuditor.value = configNegocio.pdvPerAuditor;
   f.gastosAdministrativosMonto.value = config.gastosAdministrativosMonto;
   f.contingenciaMonto.value = config.contingenciaMonto;
   f.margenMinimoPercent.value = config.margenMinimoPercent;
   f.margenRecomendadoPercent.value = config.margenRecomendadoPercent;
   f.margenMaximoPercent.value = config.margenMaximoPercent;
-  f.capacitacionInicialHoras.value = config.capacitacionInicialHoras;
-  f.supervisionCampoHorasPorCiclo.value = config.supervisionCampoHorasPorCiclo;
+  f.capacitacionInicialHoras.value = configNegocio.capacitacionInicialHoras;
+  f.supervisionCampoHorasPorCiclo.value = configNegocio.supervisionCampoHorasPorCiclo;
   f.recargoUrgenciaMonto.value = config.recargoUrgenciaMonto;
   f.ivaPercent.value = config.ivaPercent;
   f.descuentoMaximoPercent.value = config.descuentoMaximoPercent;
-  f.aguinaldoPercent.value = config.aguinaldoPercent;
-  f.ipsPatronalPercent.value = config.ipsPatronalPercent;
-  f.otrosCostosLaboralesPorHora.value = config.otrosCostosLaboralesPorHora;
-  f.recargoNocturnoPorHora.value = config.recargoNocturnoPorHora;
-  f.recargoFinDeSemanaPorHora.value = config.recargoFinDeSemanaPorHora;
+  f.aguinaldoPercent.value = configNegocio.aguinaldoPercent;
+  f.ipsPatronalPercent.value = configNegocio.ipsPatronalPercent;
+  f.otrosCostosLaboralesPorHora.value = configNegocio.otrosCostosLaboralesPorHora;
+  f.recargoNocturnoPorHora.value = configNegocio.recargoNocturnoPorHora;
+  f.recargoFinDeSemanaPorHora.value = configNegocio.recargoFinDeSemanaPorHora;
 
   // Tiempos de relevamiento — Auditoría en PDV (minutos y horas)
-  f.auditPrepMinutos.value = config.auditPrepMinutos;
-  f.auditMinutosPorProducto.value = config.auditMinutosPorProducto;
-  f.auditMinutosEvidenciaPorProducto.value = config.auditMinutosEvidenciaPorProducto;
-  f.auditMinutosCierreFormulario.value = config.auditMinutosCierreFormulario;
-  f.auditMinutosEsperaPromedio.value = config.auditMinutosEsperaPromedio;
-  f.auditMinutosTrasladoEntrePdv.value = config.auditMinutosTrasladoEntrePdv;
-  f.auditJornadaEfectivaHoras.value = config.auditJornadaEfectivaHoras;
+  f.auditPrepMinutos.value = configNegocio.auditPrepMinutos;
+  f.auditMinutosPorProducto.value = configNegocio.auditMinutosPorProducto;
+  f.auditMinutosEvidenciaPorProducto.value = configNegocio.auditMinutosEvidenciaPorProducto;
+  f.auditMinutosCierreFormulario.value = configNegocio.auditMinutosCierreFormulario;
+  f.auditMinutosEsperaPromedio.value = configNegocio.auditMinutosEsperaPromedio;
+  f.auditMinutosTrasladoEntrePdv.value = configNegocio.auditMinutosTrasladoEntrePdv;
+  f.auditJornadaEfectivaHoras.value = configNegocio.auditJornadaEfectivaHoras;
 
   // Tiempo del relevador — Mystery Shopper (minutos y horas)
   f.msMinutosTraslado.value = config.msMinutosTraslado;
@@ -3078,6 +3226,18 @@ function guardarConfigGeneral() {
     nuevaConfig[campo] = parseMilesValue(f[campo].value);
   });
 
+  // Los campos operativos visibles pertenecen solo al negocio de Auditoría
+  // seleccionado. Se conservan los valores superiores para Mystery Shopper.
+  const configNegocio = obtenerConfigNegocioAuditoria(config, CONFIG_UI_STATE.negocioAuditoria);
+  AUDIT_OPERATIONAL_FIELDS.forEach((campo) => {
+    configNegocio[campo] = nuevaConfig[campo];
+    nuevaConfig[campo] = config[campo];
+  });
+  nuevaConfig.auditBusinessConfigs = {
+    ...config.auditBusinessConfigs,
+    [CONFIG_UI_STATE.negocioAuditoria]: configNegocio,
+  };
+
   const camposNumericos = [
     ...CAMPOS_MONEDA_CONFIG, 'pdvPerAuditor',
     'margenMinimoPercent', 'margenRecomendadoPercent', 'margenMaximoPercent',
@@ -3091,14 +3251,17 @@ function guardarConfigGeneral() {
     'msMinutosCargaEvidencia', 'msMinutosInformeVisita', 'msJornadaEfectivaHorasDia',
     'msMinutosGestionRemota', 'msHorasDisenoGuion', 'msHorasAnalisisInforme',
   ];
-  const negativos = camposNumericos.filter((c) => nuevaConfig[c] < 0);
+  const negativos = camposNumericos.filter((c) => {
+    const origen = AUDIT_OPERATIONAL_FIELDS.includes(c) ? configNegocio : nuevaConfig;
+    return origen[c] < 0;
+  });
   if (negativos.length) {
     alert('Los siguientes campos no pueden ser negativos: ' + negativos.join(', '));
     return;
   }
 
   saveConfig(nuevaConfig);
-  alert('Configuración de costos guardada correctamente.');
+  alert(`Configuración guardada correctamente para ${AUDIT_BUSINESS_LABELS[CONFIG_UI_STATE.negocioAuditoria]}.`);
 }
 
 function exportarConfiguracion() {
@@ -3178,7 +3341,7 @@ function renderHistorial() {
     <tr>
       <td>${textoSeguro(q.numero)}${Number(q.version) > 1 ? `<br><small class="muted">Versión ${Number(q.version)}</small>` : ''}</td>
       <td>${textoSeguro(q.cliente)}</td>
-      <td>${textoSeguro(SERVICE_TYPE_LABELS[q.servicio] || SERVICE_TYPE_LABELS.auditoria)}</td>
+      <td>${textoSeguro(SERVICE_TYPE_LABELS[q.servicio] || SERVICE_TYPE_LABELS.auditoria)}${q.servicio === 'mysteryShopper' ? '' : `<br><small class="muted">${textoSeguro(etiquetaNegocioAuditoria(q.resultado?.inputs))}</small>`}</td>
       <td>${textoSeguro(q.fecha)}</td>
       <td>${textoSeguro(q.pdv)}</td>
       <td>${textoSeguro(zonaLabel[q.zona] || q.zona)}</td>
@@ -3813,6 +3976,8 @@ function cargarCotizacionEnFormulario(record) {
   });
   actualizarCamposPorTipoServicio(inputs.serviceType === 'mysteryShopper' ? 'mysteryShopper' : 'auditoria');
   f.serviceType.value = inputs.serviceType === 'mysteryShopper' ? 'mysteryShopper' : 'auditoria';
+  f.auditBusinessType.value = AUDIT_BUSINESS_KEYS.includes(inputs.auditBusinessType) ? inputs.auditBusinessType : 'farmacia';
+  actualizarBotonesSeleccion('auditBusinessButtons', f.auditBusinessType.value);
   document.getElementById('departmentWrapper').style.display =
     (inputs.zone === 'interior' || inputs.zone === 'granAsuncion') ? 'block' : 'none';
   document.getElementById('zoneSplitWrapper').style.display =
@@ -3932,6 +4097,7 @@ function construirHtmlPreviewAuditoria(resultado, config, numero, tipo) {
       <table class="breakdown-table">
         <tbody>
           <tr><td>Tipo de servicio</td><td>${textoSeguro(SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType)}</td></tr>
+          <tr><td>Tipo de negocio</td><td>${textoSeguro(etiquetaNegocioAuditoria(inputs))}</td></tr>
           <tr><td>Cantidad de PDV</td><td>${inputs.pdvCount}</td></tr>
           <tr><td>Productos por PDV</td><td>${inputs.productsPerPdv}</td></tr>
           <tr><td>Productos únicos aproximados</td><td>${totalProductos.toLocaleString('es-PY')}</td></tr>
@@ -4119,6 +4285,7 @@ function generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo, opcione
 
   addLine('ALCANCE DEL SERVICIO', { bold: true, size: 12, lh: 18 });
   addRow('Tipo de servicio', SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType);
+  addRow('Tipo de negocio', etiquetaNegocioAuditoria(inputs));
   addRow('Cantidad de PDV', String(inputs.pdvCount));
   addRow('Productos por PDV', String(inputs.productsPerPdv));
   addRow('Productos únicos aproximados', totalProductos.toLocaleString('es-PY'));

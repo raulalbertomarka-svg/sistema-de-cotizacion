@@ -370,6 +370,12 @@ textarea { resize: vertical; }
   border-color: #ecd9ad;
 }
 .stat-card-margin .stat-value { color: var(--color-accent-dark); }
+.stat-card-success { border-color: #b9dfc8; background: #f4fbf6; }
+.stat-card-success .stat-value { color: #18723a; }
+.stat-card-warning { border-color: #ead39a; background: #fffaf0; }
+.stat-card-warning .stat-value { color: #8a5a00; }
+.stat-card-danger { border-color: #efc0c0; background: #fff7f7; }
+.stat-card-danger .stat-value { color: #a12626; }
 
 .breakdown-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 .breakdown-table td { padding: 7px 4px; border-bottom: 1px solid var(--color-border); }
@@ -389,6 +395,37 @@ textarea { resize: vertical; }
   border-collapse: collapse;
   font-size: 0.86rem;
   min-width: 640px;
+}
+
+.resumen-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.resumen-bar-label {
+  flex: 0 0 150px;
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+.resumen-bar-track {
+  flex: 1;
+  background: var(--color-bg);
+  border-radius: 6px;
+  height: 18px;
+  overflow: hidden;
+}
+.resumen-bar-fill {
+  background: var(--color-accent);
+  height: 100%;
+  border-radius: 6px 0 0 6px;
+}
+.resumen-bar-count {
+  flex: 0 0 30px;
+  text-align: right;
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--color-primary);
 }
 
 .data-table th {
@@ -600,6 +637,175 @@ th .info-icon {
 .service-accordion-body .form-section:first-of-type {
   border-top: none;
   padding-top: 0;
+}
+
+/* Autorizaciones */
+.approval-header,
+.approval-card-header,
+.approval-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.approval-header-actions,
+.priority-send-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nav-count-badge {
+  margin-left: auto;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: .78rem;
+  font-weight: 800;
+}
+.priority-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: .8rem;
+  font-weight: 800;
+  border: 1px solid transparent;
+}
+.priority-alta { background:#fef2f2; border-color:#fca5a5; color:#991b1b; }
+.priority-media { background:#fffbeb; border-color:#fcd34d; color:#92400e; }
+.priority-baja { background:#ecfdf5; border-color:#86efac; color:#166534; }
+.select-prioridad { min-width: 105px; }
+
+.choice-button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.choice-button {
+  appearance: none;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  color: #10213d;
+  padding: 12px 18px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+
+.choice-button:hover { border-color: #d5a437; }
+
+.choice-button.active {
+  background: #d5a437;
+  border-color: #d5a437;
+  box-shadow: 0 0 0 3px rgba(213, 164, 55, .16);
+}
+
+.visually-hidden-select {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.config-selector-card h2,
+.config-selector-card h3 { margin-bottom: 8px; }
+.config-selector-card h3 { margin-top: 20px; }
+
+.approval-card { margin-bottom: 20px; }
+.approval-card h2 { margin: 0 0 4px; }
+.approval-meta { color: var(--color-text-muted); font-size: .92rem; }
+.approval-cost-row td { vertical-align: top; }
+.approval-comment-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 220px) auto;
+  gap: 8px;
+  align-items: end;
+  min-width: 540px;
+}
+.approval-comment-grid textarea { min-height: 58px; resize: vertical; }
+.approval-existing-note {
+  margin-top: 8px;
+  padding: 9px 11px;
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-bg);
+  border-radius: 4px;
+  font-size: .9rem;
+}
+.approval-decision { margin-top: 16px; }
+.approval-decision textarea { width: 100%; min-height: 72px; margin: 8px 0 12px; }
+
+/* Historial: evita textos cortados o columnas excesivamente angostas. */
+.history-table { width: 100%; min-width: 0; table-layout: fixed; }
+.history-table th,
+.history-table td { padding-left: 10px; padding-right: 10px; }
+.history-table th:nth-child(1) { width: 9%; }
+.history-table th:nth-child(2) { width: 7%; }
+.history-table th:nth-child(3) { width: 13%; }
+.history-table th:nth-child(4) { width: 8%; }
+.history-table th:nth-child(5) { width: 6%; }
+.history-table th:nth-child(6) { width: 6%; }
+.history-table th:nth-child(7) { width: 9%; }
+.history-table th:nth-child(8) { width: 11%; }
+.history-table th:nth-child(9) { width: 11%; }
+.history-table th:nth-child(10) { width: 20%; }
+.history-table td:nth-child(1),
+.history-table td:nth-child(4),
+.history-table td:nth-child(5),
+.history-table td:nth-child(6),
+.history-table td:nth-child(7) { white-space: nowrap; }
+.history-table td:nth-child(3) { line-height: 1.35; }
+.history-table .col-actions {
+  min-width: 0;
+  white-space: normal;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.history-table .col-actions .btn { margin: 0; }
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  font-size: .86rem;
+  font-weight: 700;
+}
+.status-cambios-solicitados { background: #fff7ed; border-color: #fdba74; color: #9a3412; }
+.status-pendiente-de-aprobaci-n,
+.status-en-revisi-n { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; }
+.status-aprobada { background: #ecfdf5; border-color: #86efac; color: #166534; }
+.status-rechazada,
+.status-cancelada { background: #fef2f2; border-color: #fca5a5; color: #991b1b; }
+.change-response-card { margin-top: 14px; padding: 14px 16px; }
+.change-response-card p { margin: 8px 0; }
+.change-response-form { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.change-response-form textarea { width: 100%; min-height: 64px; margin: 7px 0 10px; resize: vertical; }
+
+@media (max-width: 760px) {
+  .approval-comment-grid { min-width: 0; grid-template-columns: 1fr; }
+  .history-table { min-width: 980px; table-layout: auto; }
 }
 
 /* ==========================================================================

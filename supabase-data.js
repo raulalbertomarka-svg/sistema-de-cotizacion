@@ -89,7 +89,7 @@
       servicio: tipoServicioDb(i.serviceType),
       alcance: i.serviceType === 'mysteryShopper'
         ? { empresas: Number(i.msAseguradorasCount) || 0, sucursales: Number(i.msSucursalesPresencial) || 0, rondas: Number(i.msRondas) || 1 }
-        : { pdv: Number(i.pdvCount) || 0, productos_por_pdv: Number(i.productsPerPdv) || 0, visitas_por_pdv: Number(i.visitsPerPdv) || 1 },
+        : { negocio: i.auditBusinessType || null, pdv: Number(i.pdvCount) || 0, productos_por_pdv: Number(i.productsPerPdv) || 0, visitas_por_pdv: Number(i.visitsPerPdv) || 1 },
       precio_final: Number(d.precioFinalElegido) || Number(d.total) || 0,
       iva_porcentaje: Number(d.ivaPercent) || 0,
       moneda: 'PYG'
@@ -108,6 +108,7 @@
       };
     }
     return {
+      negocio: i.auditBusinessType || null,
       pdv: Number(i.pdvCount) || 0,
       productos_por_pdv: Number(i.productsPerPdv) || 0,
       visitas_por_pdv: Number(i.visitsPerPdv) || 1,
