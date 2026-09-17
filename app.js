@@ -3238,8 +3238,16 @@ function renderHistorial() {
       const nuevoNumero = getNextQuoteNumber();
       const copia = JSON.parse(JSON.stringify(record));
       copia.id = cryptoId();
+      copia.supabaseId = null;
       copia.numero = nuevoNumero;
+      copia.version = 1;
+      copia.cotizacionAnteriorId = null;
       copia.estado = 'Borrador';
+      copia.prioridad = 'media';
+      copia.aprobadorId = null;
+      copia.aprobadaPorId = null;
+      copia.aprobadaPorNombre = null;
+      copia.aprobadaEn = null;
       historial.push(copia);
       saveHistory(historial);
       renderHistorial();
