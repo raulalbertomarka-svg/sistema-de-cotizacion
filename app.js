@@ -24,6 +24,11 @@ const STORAGE_KEYS = {
   COUNTER: 'pdv_cotizador_contador_v1',
 };
 
+const CONFIG_CLOUD_STATE = {
+  aplicandoRemota: false,
+  timer: null,
+};
+
 /**
  * Valores de ejemplo. NO SON PRECIOS REALES DE MERCADO.
  * El usuario debe editarlos desde "Configuración de costos".
@@ -275,6 +280,45 @@ function getConfig() {
 
 function saveConfig(config) {
   localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(config));
+  if (
+    !CONFIG_CLOUD_STATE.aplicandoRemota &&
+    window.USUARIO_ACTUAL?.rol === 'administrador' &&
+    window.CotizadorSupabase
+  ) {
+    clearTimeout(CONFIG_CLOUD_STATE.timer);
+    CONFIG_CLOUD_STATE.timer = setTimeout(async () => {
+      try {
+        await window.CotizadorSupabase.guardarConfiguracion(config);
+      } catch (error) {
+        console.error('No se pudo guardar la configuración en Supabase:', error);
+        alert(`La configuración quedó guardada localmente, pero no se sincronizó con Supabase.\n\nDetalle: ${error.message}`);
+      }
+    }, 500);
+  }
+}
+
+async function sincronizarConfiguracionSupabase() {
+  if (!window.CotizadorSupabase || !window.USUARIO_ACTUAL) return;
+  try {
+    const remota = await window.CotizadorSupabase.obtenerConfiguracion();
+    if (remota?.datos) {
+      const { config } = migrarConfiguracion(remota.datos);
+      CONFIG_CLOUD_STATE.aplicandoRemota = true;
+      saveConfig(config);
+      CONFIG_CLOUD_STATE.aplicandoRemota = false;
+      if (APP_STATE.currentView === 'config') renderConfiguracion();
+      return;
+    }
+    if (window.USUARIO_ACTUAL.rol === 'administrador') {
+      await window.CotizadorSupabase.guardarConfiguracion(getConfig());
+      return;
+    }
+    throw new Error('El administrador todavía no publicó la configuración principal.');
+  } catch (error) {
+    CONFIG_CLOUD_STATE.aplicandoRemota = false;
+    console.error('No se pudo cargar la configuración compartida:', error);
+    alert(`No se pudo cargar la configuración compartida.\n\nDetalle: ${error.message}`);
+  }
 }
 
 function getHistory() {
@@ -547,9 +591,14 @@ function calcularManoObraOficina(inputs, config) {
     ciclosOficina = rondas;
   } else {
     const pdv = Number(inputs.pdvCount) || 0;
+    const visitasPorPdv = Number(inputs.visitsPerPdv) || 1;
     unidadAlcance = pdv;
-    totalProductosOficina = (Number(inputs.productsPerPdv) || 0) * pdv;
     ciclosOficina = calcularCiclos(inputs.frequency, Number(inputs.durationMonths) || 1);
+    // Se usa el volumen REAL de trabajo (registros totales relevados: PDV ×
+    // productos × visitas × ciclos), no solo los productos únicos, ya que
+    // tareas como "limpieza de datos" o "análisis" escalan con la cantidad
+    // real de registros procesados, no con el catálogo de productos.
+    totalProductosOficina = (Number(inputs.productsPerPdv) || 0) * pdv * visitasPorPdv * ciclosOficina;
   }
 
   const perfiles = Array.isArray(config.officeProfiles) ? config.officeProfiles : [];
@@ -790,9 +839,37 @@ function calcularMysteryShopper(inputs, config) {
     shoppersNecesarios || 1
   );
 
+  // Mystery Shopper comparte los mismos gastos y servicios adicionales que
+  // Auditoría en PDV. Se usa la dotación simultánea recomendada y las rondas
+  // como base para los gastos operativos seleccionados.
+  const cantidadShoppers = Math.max(1, shoppersNecesarios || 1);
+  const costoTraslado = inputs.requiresTraslado
+    ? cantidadShoppers * rondas * (Number(config.costoTraslado) || 0)
+    : 0;
+  const costoViaticos = inputs.requiresViaticos
+    ? cantidadShoppers * rondas * (Number(config.viaticoPorAuditorPorDia) || 0)
+    : 0;
+  const costoAlojamiento = inputs.requiresAlojamiento
+    ? cantidadShoppers * rondas * (Number(config.alojamientoPorAuditorPorNoche) || 0)
+    : 0;
+  const costoFotografia = inputs.requiresFotografia ? Number(config.costoEvidenciaFotografica) || 0 : 0;
+  const infoInforme = calcularCostoServicioAdicional(
+    inputs.requiresInforme, config.costoInformeFinal, config.modoCosteoInforme, manoDeObraOficina.tareasPorTipo.elaboracion_informe
+  );
+  const infoDashboard = calcularCostoServicioAdicional(
+    inputs.requiresDashboard, config.costoDashboard, config.modoCosteoDashboard, manoDeObraOficina.tareasPorTipo.dashboard
+  );
+  const infoPresentacion = calcularCostoServicioAdicional(
+    inputs.requiresPresentacion, config.costoPresentacion, config.modoCosteoPresentacion, manoDeObraOficina.tareasPorTipo.elaboracion_presentacion
+  );
+  const costoInforme = infoInforme.costo;
+  const costoDashboard = infoDashboard.costo;
+  const costoPresentacion = infoPresentacion.costo;
+
   // --- E. Resumen y total ---
   const subtotalManoObra = costoCampoManoObra + costoRemotoManoObra + costoCoordinacion + costoManoDeObraOficina;
-  const subtotalGeneral = subtotalManoObra + viaticosTotales + parametrosOpcionales.costoAdicionalTotal;
+  const subtotalGeneral = subtotalManoObra + viaticosTotales + costoTraslado + costoViaticos + costoAlojamiento +
+    costoFotografia + costoInforme + costoDashboard + costoPresentacion + parametrosOpcionales.costoAdicionalTotal;
 
   const costoAdicionalManual = Number(inputs.extraCostManual) || 0;
 
@@ -841,6 +918,13 @@ function calcularMysteryShopper(inputs, config) {
       costoRemotoManoObra,
       horasCoordinacion,
       costoCoordinacion,
+      costoTraslado,
+      costoViaticos,
+      costoAlojamiento,
+      costoFotografia,
+      costoInforme,
+      costoDashboard,
+      costoPresentacion,
       costoManoDeObraOficina,
       horasTotalesOficina: manoDeObraOficina.horasTotalesOficina,
       tareasOficinaDetalle: manoDeObraOficina.tareasDetalle,
@@ -1099,21 +1183,31 @@ function calcularAuditoriaPDV(inputs, config) {
   const montoGastosYContingencia = gastosAdministrativosMonto + contingenciaMonto + parametrosOpcionales.recargoUrgenciaMonto;
   const costoConGastos = costoInternoTotal + montoGastosYContingencia;
 
-  // El precio "de escala" (mínimo/recomendado/máximo) se combina con los
-  // recargos, la zona y el costo con gastos para armar el RANGO COMERCIAL
-  // completo: 3 cotizaciones paralelas, una por cada nivel de margen.
-  function calcularTier(precioBaseCicloTier, margenPercentTier) {
-    const subtotalPorCicloTier = precioBaseCicloTier + recargoProductosCiclo + recargoVisitasCiclo;
-    const subtotalRecurrenteTier = subtotalPorCicloTier * ciclos;
-    // El recargo de zona es un monto fijo en Gs. (no depende del precio de
-    // escala), así que es el mismo para los 3 niveles del rango comercial.
-    const subtotalAntesMargenTier = subtotalRecurrenteTier + recargoZona + costoConGastos;
+  // --- El precio de escala NO es un costo: es un precio de referencia
+  // comercial. Para cada nivel (mínimo/recomendado/máximo) se comparan dos
+  // caminos de precio independientes y se usa el MAYOR de los dos, evitando
+  // así que el precio de escala reciba margen "encima" de sí mismo:
+  //   A. Precio calculado por costos = costo con gastos × (1 + margen%)
+  //   B. Precio de referencia por escala = precio de escala × ciclos
+  // Los recargos de productos/visitas adicionales y de zona son costos
+  // reales de alcance adicional, así que se suman DESPUÉS de elegir el mayor.
+  function calcularTier(precioEscalaTier, margenPercentTier) {
+    const precioPorCostosTier = costoConGastos * (1 + (Number(margenPercentTier) || 0) / 100);
+    const precioPorEscalaTier = precioEscalaTier * ciclos;
+    const precioBaseSugeridoTier = Math.max(precioPorCostosTier, precioPorEscalaTier);
+
+    const recargosComunesPorCiclo = recargoProductosCiclo + recargoVisitasCiclo;
+    const subtotalAntesMargenTier = precioBaseSugeridoTier + (recargosComunesPorCiclo * ciclos) + recargoZona;
+
     return {
-      subtotalPorCiclo: subtotalPorCicloTier,
-      subtotalRecurrente: subtotalRecurrenteTier,
+      precioPorCostos: precioPorCostosTier,
+      precioPorEscala: precioPorEscalaTier,
+      precioBaseSugerido: precioBaseSugeridoTier,
+      subtotalPorCiclo: precioEscalaTier + recargoProductosCiclo + recargoVisitasCiclo,
+      subtotalRecurrente: precioEscalaTier * ciclos + recargosComunesPorCiclo * ciclos,
       recargoZona,
       subtotalAntesMargen: subtotalAntesMargenTier,
-      ...calcularPipelineComercial(subtotalAntesMargenTier, margenPercentTier, config, inputs),
+      ...calcularPipelineComercial(subtotalAntesMargenTier, 0, config, inputs),
     };
   }
 
@@ -1127,8 +1221,10 @@ function calcularAuditoriaPDV(inputs, config) {
   // --- Campos "clásicos" del desglose: usan el tier RECOMENDADO, para no
   // romper el resultado, PDF e historial ya existentes. ---
   const subtotalAntesMargen = tierRecomendado.subtotalAntesMargen;
-  const margenPercent = tierRecomendado.margenPercent;
-  const margenComercial = tierRecomendado.margen;
+  const margenPercent = config.margenRecomendadoPercent;
+  // El margen "de referencia" (Gs.) es el margen teórico si se usara el
+  // camino de costos, aunque en definitiva haya ganado el precio de escala.
+  const margenComercial = tierRecomendado.precioPorCostos - costoConGastos;
   const subtotalConMargen = tierRecomendado.subtotalConMargen;
   const descuentoPercent = tierRecomendado.descuentoPercent;
   const montoDescuento = tierRecomendado.montoDescuento;
@@ -1193,9 +1289,13 @@ function calcularAuditoriaPDV(inputs, config) {
       contingenciaMonto,
       montoGastosYContingencia,
       costoConGastos,
+      // Comparación explícita: precio calculado por costos vs. precio de
+      // referencia por escala (se usa el mayor de los dos para cada nivel).
+      precioPorCostos: tierRecomendado.precioPorCostos,
+      precioPorEscala: tierRecomendado.precioPorEscala,
       rangoComercial,
-      margenMinimoPercent: tierMinimo.margenPercent,
-      margenMaximoPercent: tierMaximo.margenPercent,
+      margenMinimoPercent: config.margenMinimoPercent,
+      margenMaximoPercent: config.margenMaximoPercent,
       precioFinalModo: precioFinalInfo.modo,
       precioFinalElegido: precioFinalInfo.precioFinal,
       margenRealGs: precioFinalInfo.margenRealGs,
@@ -1213,6 +1313,7 @@ function calcularAuditoriaPDV(inputs, config) {
       total,
     },
     totalProductos: productosPorPdv * pdv,
+    registrosTotalesRelevados: productosPorPdv * pdv * visitasPorPdv * ciclos,
     totalVisitas,
     costoMensualEstimado,
     productosIncluidosEscala: productosIncluidos,
@@ -1638,6 +1739,13 @@ const APP_STATE = {
   currentView: 'nueva',
   editingQuoteId: null, // si estamos editando una cotización del historial
   lastResult: null, // último resultado calculado (para exportar / guardar)
+  filtroPrioridadAutorizaciones: '',
+};
+
+const PRIORIDAD_LABELS = {
+  alta: '🔴 Alta',
+  media: '🟡 Media',
+  baja: '🟢 Baja'
 };
 
 function initNavegacion() {
@@ -1665,7 +1773,110 @@ function cambiarVista(view) {
   document.getElementById('sidebar').classList.remove('open');
 
   if (view === 'historial') renderHistorial();
+  if (view === 'autorizaciones') renderAutorizaciones();
+  if (view === 'cambios') renderCambiosSolicitados();
   if (view === 'config') renderConfiguracion();
+  if (view === 'resumen') renderResumen();
+}
+
+/**
+ * Renderiza el panel de "Resumen": estadísticas generales del historial
+ * de cotizaciones guardado en este navegador (localStorage). No requiere
+ * backend ni conexión: se calcula todo en el momento a partir de getHistory().
+ */
+function renderResumen() {
+  const historialCompleto = getHistory();
+  // Una cotización puede tener varias versiones. Los indicadores consideran
+  // únicamente la versión más nueva de cada número para no contarla dos veces.
+  const ultimasVersiones = new Map();
+  historialCompleto.forEach((q) => {
+    const clave = q.numero || q.id;
+    const anterior = ultimasVersiones.get(clave);
+    if (!anterior || Number(q.version || 1) >= Number(anterior.version || 1)) ultimasVersiones.set(clave, q);
+  });
+  const historial = [...ultimasVersiones.values()];
+  const config = getConfig();
+  const cantidad = historial.length;
+  const aprobadas = historial.filter((q) => q.estado === 'Aprobada');
+  const rechazadas = historial.filter((q) => q.estado === 'Rechazada');
+  const pendientes = historial.filter((q) => ['Pendiente de aprobación', 'En revisión'].includes(q.estado));
+  const montoTotal = aprobadas.reduce((acc, q) => acc + (Number(q.total) || 0), 0);
+  const ticketPromedio = aprobadas.length > 0 ? montoTotal / aprobadas.length : 0;
+  const decisiones = aprobadas.length + rechazadas.length;
+  const tasaAprobacion = decisiones > 0 ? (aprobadas.length / decisiones) * 100 : 0;
+
+  document.getElementById('resumenCantidad').textContent = cantidad.toLocaleString('es-PY');
+  document.getElementById('resumenPendientes').textContent = pendientes.length.toLocaleString('es-PY');
+  document.getElementById('resumenAprobadas').textContent = aprobadas.length.toLocaleString('es-PY');
+  document.getElementById('resumenRechazadas').textContent = rechazadas.length.toLocaleString('es-PY');
+  document.getElementById('resumenMontoTotal').textContent = formatearMoneda(montoTotal, config.moneda);
+  document.getElementById('resumenTicketPromedio').textContent = formatearMoneda(ticketPromedio, config.moneda);
+  document.getElementById('resumenTasaAprobacion').textContent = `${tasaAprobacion.toLocaleString('es-PY', { maximumFractionDigits: 1 })}%`;
+
+  // --- Cotizaciones por servicio ---
+  const porServicio = {};
+  historial.forEach((q) => {
+    const label = SERVICE_TYPE_LABELS[q.servicio] || SERVICE_TYPE_LABELS.auditoria;
+    porServicio[label] = (porServicio[label] || 0) + 1;
+  });
+  document.getElementById('resumenPorServicio').innerHTML = construirBarrasResumen(porServicio, cantidad);
+
+  // --- Cotizaciones por estado ---
+  const porEstado = {};
+  ['Borrador', 'Pendiente de aprobación', 'En revisión', 'Cambios solicitados', 'Aprobada', 'Rechazada', 'Enviada al cliente', 'Vencida', 'Cancelada'].forEach((e) => { porEstado[e] = 0; });
+  historial.forEach((q) => {
+    porEstado[q.estado] = (porEstado[q.estado] || 0) + 1;
+  });
+  document.getElementById('resumenPorEstado').innerHTML = construirBarrasResumen(porEstado, cantidad);
+
+  const porCreador = {};
+  historial.forEach((q) => {
+    const nombre = q.creadoPorNombre || 'Sin identificar';
+    porCreador[nombre] = (porCreador[nombre] || 0) + 1;
+  });
+  document.getElementById('resumenPorCreador').innerHTML = construirBarrasResumen(porCreador, cantidad);
+
+  const porAprobador = {};
+  aprobadas.forEach((q) => {
+    const nombre = q.aprobadaPorNombre || 'Sin identificar';
+    porAprobador[nombre] = (porAprobador[nombre] || 0) + 1;
+  });
+  document.getElementById('resumenPorAprobador').innerHTML = construirBarrasResumen(porAprobador, aprobadas.length);
+
+  // --- Últimas cotizaciones (las 5 más recientes) ---
+  const ultimas = historial.slice().reverse().slice(0, 5);
+  const tbody = document.getElementById('resumenUltimasBody');
+  tbody.innerHTML = ultimas.map((q) => `
+    <tr>
+      <td>${textoSeguro(q.numero)}${Number(q.version) > 1 ? `<br><small class="muted">Versión ${Number(q.version)}</small>` : ''}</td>
+      <td>${textoSeguro(q.cliente)}</td>
+      <td>${textoSeguro(SERVICE_TYPE_LABELS[q.servicio] || SERVICE_TYPE_LABELS.auditoria)}</td>
+      <td>${textoSeguro(q.fecha)}</td>
+      <td>${formatearMoneda(q.total, config.moneda)}</td>
+      <td>${textoSeguro(q.estado)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="6" class="muted">Todavía no hay cotizaciones guardadas en este navegador.</td></tr>';
+}
+
+/**
+ * Construye una lista de barras horizontales simples (etiqueta + barra +
+ * cantidad) a partir de un objeto { etiqueta: cantidad }.
+ */
+function construirBarrasResumen(datos, total) {
+  const entradas = Object.entries(datos).filter(([, cant]) => cant > 0);
+  if (entradas.length === 0) {
+    return '<p class="muted">Sin datos todavía.</p>';
+  }
+  return entradas.map(([label, cant]) => {
+    const porcentaje = total > 0 ? Math.round((cant / total) * 100) : 0;
+    return `
+      <div class="resumen-bar-row">
+        <span class="resumen-bar-label">${textoSeguro(label)}</span>
+        <div class="resumen-bar-track"><div class="resumen-bar-fill" style="width:${porcentaje}%;"></div></div>
+        <span class="resumen-bar-count">${cant}</span>
+      </div>
+    `;
+  }).join('');
 }
 
 /* ==========================================================================
@@ -1700,17 +1911,37 @@ function initFormularioCotizacion() {
 
   document.getElementById('btnLimpiarForm').addEventListener('click', () => {
     if (confirm('¿Limpiar todos los campos del formulario?')) {
-      document.getElementById('formCotizacion').reset();
-      document.getElementById('quoteDate').valueAsDate = new Date();
-      document.getElementById('resultadoWrapper').innerHTML = '';
-      document.getElementById('departmentWrapper').style.display = 'none';
-      document.getElementById('zoneSplitWrapper').style.display = 'none';
-      actualizarCamposPorTipoServicio('auditoria');
-      attachMilesFormatting(document.getElementById('extraCostManual'));
-      APP_STATE.editingQuoteId = null;
-      APP_STATE.lastResult = null;
+      limpiarFormularioCotizacion();
     }
   });
+}
+
+function limpiarFormularioCotizacion() {
+  const formulario = document.getElementById('formCotizacion');
+  formulario.reset();
+  // Fuerza el vaciado de los datos propios de la cotización. Algunos
+  // navegadores pueden restaurar valores escritos aunque se use reset().
+  [
+    'clientName', 'contactName', 'projectName', 'notes',
+    'pdvCount', 'productsPerPdv', 'auditorsCount',
+    'extraCostReason'
+  ].forEach((nombre) => {
+    if (formulario.elements[nombre]) formulario.elements[nombre].value = '';
+  });
+  formulario.elements.extraCostManual.value = '0';
+  formulario.elements.serviceType.value = 'auditoria';
+  document.getElementById('quoteDate').valueAsDate = new Date();
+  document.getElementById('resultadoWrapper').innerHTML = '';
+  document.getElementById('formErrors').style.display = 'none';
+  document.getElementById('formErrors').innerHTML = '';
+  document.getElementById('departmentWrapper').style.display = 'none';
+  document.getElementById('zoneSplitWrapper').style.display = 'none';
+  document.getElementById('auditorsCountWrapper').style.display = 'none';
+  actualizarCamposPorTipoServicio('auditoria');
+  attachMilesFormatting(document.getElementById('extraCostManual'));
+  APP_STATE.editingQuoteId = null;
+  APP_STATE.lastResult = null;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 /**
@@ -1721,7 +1952,7 @@ function initFormularioCotizacion() {
 function actualizarCamposPorTipoServicio(tipo) {
   const esMS = tipo === 'mysteryShopper';
   document.getElementById('fieldsetAuditoria').style.display = esMS ? 'none' : '';
-  document.getElementById('fieldsetServiciosAdicionales').style.display = esMS ? 'none' : '';
+  document.getElementById('fieldsetServiciosAdicionales').style.display = '';
   document.getElementById('fieldsetMysteryShopper').style.display = esMS ? '' : 'none';
 }
 
@@ -1810,6 +2041,17 @@ function construirBloqueRangoComercial(resultado, config) {
   const { desglose, inputs } = resultado;
   const r = desglose.rangoComercial;
   const modo = desglose.precioFinalModo || 'recomendado';
+  const tieneComparacionEscala = desglose.precioPorEscala !== undefined;
+
+  const bloqueComparacion = tieneComparacionEscala ? `
+        <table class="breakdown-table" style="margin-top:10px;">
+          <tbody>
+            <tr><td>Precio calculado por costos (costo con gastos + margen recomendado)</td><td>${formatearMoneda(desglose.precioPorCostos, config.moneda)}</td></tr>
+            <tr><td>Precio de referencia por escala (según cantidad de PDV)</td><td>${formatearMoneda(desglose.precioPorEscala, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Se usa el MAYOR de los dos, para el nivel recomendado</td><td>${formatearMoneda(Math.max(desglose.precioPorCostos, desglose.precioPorEscala), config.moneda)}</td></tr>
+          </tbody>
+        </table>
+  ` : '';
 
   return `
       <div class="result-block">
@@ -1821,6 +2063,7 @@ function construirBloqueRangoComercial(resultado, config) {
             <tr class="subtotal-row"><td>Costo con gastos</td><td>${formatearMoneda(desglose.costoConGastos, config.moneda)}</td></tr>
           </tbody>
         </table>
+        ${bloqueComparacion}
         <div class="result-grid" style="margin-top:12px;">
           <div class="stat-card"><span class="stat-label">Precio mínimo (margen ${desglose.margenMinimoPercent}%)</span><span class="stat-value">${formatearMoneda(r.minimo, config.moneda)}</span></div>
           <div class="stat-card stat-card-margin"><span class="stat-label">Precio recomendado (margen ${desglose.margenPercent}%)</span><span class="stat-value">${formatearMoneda(r.recomendado, config.moneda)}</span></div>
@@ -1878,7 +2121,7 @@ function actualizarPrecioFinalEnResultado(nuevoModo, precioManual) {
 }
 
 function construirCuerpoResultadoAuditoria(resultado, config) {
-  const { inputs, desglose, ciclos, totalProductos, totalVisitas, costoPromedioPorPdv, costoPromedioPorVisita, costoMensualEstimado } = resultado;
+  const { inputs, desglose, ciclos, totalProductos, registrosTotalesRelevados, totalVisitas, costoPromedioPorPdv, costoPromedioPorVisita, costoMensualEstimado } = resultado;
 
   const serviciosAdicionales = [];
   if (inputs.requiresTraslado) serviciosAdicionales.push('Traslado');
@@ -1900,9 +2143,9 @@ function construirCuerpoResultadoAuditoria(resultado, config) {
         <div class="result-block">
           <h3>Datos del cliente</h3>
           <dl>
-            <dt>Cliente</dt><dd>${inputs.clientName}</dd>
-            <dt>Contacto</dt><dd>${inputs.contactName || '-'}</dd>
-            <dt>Fecha</dt><dd>${inputs.quoteDate}</dd>
+            <dt>Cliente</dt><dd>${textoSeguro(inputs.clientName)}</dd>
+            <dt>Contacto</dt><dd>${textoSeguro(inputs.contactName || '-')}</dd>
+            <dt>Fecha</dt><dd>${textoSeguro(inputs.quoteDate)}</dd>
             <dt>Vigencia</dt><dd>${inputs.validity ? inputs.validity + ' días' : '-'}</dd>
           </dl>
         </div>
@@ -1911,8 +2154,9 @@ function construirCuerpoResultadoAuditoria(resultado, config) {
           <dl>
             <dt>PDV</dt><dd>${inputs.pdvCount}</dd>
             <dt>Productos por PDV</dt><dd>${inputs.productsPerPdv}</dd>
-            <dt>Total productos a auditar</dt><dd>${totalProductos.toLocaleString('es-PY')}</dd>
-            <dt>Zona</dt><dd>${zonaLabel}${inputs.department ? ' - ' + inputs.department : ''}${detalleZonaCombinada}</dd>
+            <dt>Productos únicos aproximados</dt><dd>${totalProductos.toLocaleString('es-PY')} <span class="muted">(PDV × productos por PDV)</span></dd>
+            <dt>Registros totales a relevar</dt><dd>${registrosTotalesRelevados.toLocaleString('es-PY')} <span class="muted">(× visitas × ciclos)</span></dd>
+            <dt>Zona</dt><dd>${textoSeguro(zonaLabel)}${inputs.department ? ' - ' + textoSeguro(inputs.department) : ''}${textoSeguro(detalleZonaCombinada)}</dd>
             <dt>Frecuencia</dt><dd>${frecuenciaLabel}</dd>
             <dt>Duración</dt><dd>${inputs.durationMonths} mes(es) · ${ciclos} ciclo(s) de visita</dd>
             <dt>Visitas totales</dt><dd>${totalVisitas}</dd>
@@ -1922,6 +2166,21 @@ function construirCuerpoResultadoAuditoria(resultado, config) {
       </div>
 
       ${serviciosAdicionales.length ? `<div class="result-block"><h3>Servicios adicionales</h3><p>${serviciosAdicionales.join(', ')}</p></div>` : ''}
+
+      <div class="result-block">
+        <h3>Tiempo de relevamiento</h3>
+        <table class="breakdown-table">
+          <tbody>
+            <tr><td>Minutos operativos por PDV (preparación + espera + cierre + productos)</td><td>${desglose.minutosOperativosPorPdv.toLocaleString('es-PY')} minutos</td></tr>
+            <tr><td>Horas operativas totales (relevamiento)</td><td>${desglose.horasRelevamiento.toLocaleString('es-PY', { maximumFractionDigits: 1 })} horas</td></tr>
+            <tr><td>Horas de traslado totales</td><td>${desglose.horasTraslado.toLocaleString('es-PY', { maximumFractionDigits: 1 })} horas</td></tr>
+            <tr class="subtotal-row"><td>Horas hombre totales de campo</td><td>${desglose.horasHombreTotales.toLocaleString('es-PY', { maximumFractionDigits: 1 })} horas</td></tr>
+            <tr><td>PDV que cubre un relevador por día</td><td>${desglose.pdvPorDiaPorPersona}</td></tr>
+            <tr><td>Jornadas (días) necesarias con 1 sola persona</td><td>${desglose.diasNecesariosConUnaPersona} días</td></tr>
+            <tr><td>Cantidad recomendada de relevadores</td><td>${desglose.relevadoresRecomendados} persona(s)</td></tr>
+          </tbody>
+        </table>
+      </div>
 
       <div class="result-block">
         <h3>Desglose del cálculo (uso interno)</h3>
@@ -1941,14 +2200,12 @@ function construirCuerpoResultadoAuditoria(resultado, config) {
             <tr><td>Dashboard</td><td>${formatearMoneda(desglose.costoDashboard, config.moneda)}</td></tr>
             <tr><td>Presentación de resultados</td><td>${formatearMoneda(desglose.costoPresentacion, config.moneda)}</td></tr>
             <tr><td>Mano de obra (${desglose.horasHombreTotales.toLocaleString('es-PY')} horas c/cargas sociales)</td><td>${formatearMoneda(desglose.costoManoDeObra, config.moneda)}</td></tr>
-            <tr><td>Costo adicional manual ${inputs.extraCostReason ? '(' + inputs.extraCostReason + ')' : ''}</td><td>${formatearMoneda(desglose.costoAdicionalManual, config.moneda)}</td></tr>
-            <tr class="subtotal-row"><td>Subtotal antes de margen</td><td>${formatearMoneda(desglose.subtotalAntesMargen, config.moneda)}</td></tr>
-            <tr><td>Margen de ganancia (${desglose.margenPercent}%)</td><td>${formatearMoneda(desglose.margenComercial, config.moneda)}</td></tr>
-            <tr class="subtotal-row"><td>Subtotal con margen</td><td>${formatearMoneda(desglose.subtotalConMargen, config.moneda)}</td></tr>
+            <tr><td>Costo adicional manual ${inputs.extraCostReason ? '(' + textoSeguro(inputs.extraCostReason) + ')' : ''}</td><td>${formatearMoneda(desglose.costoAdicionalManual, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Precio comercial antes de IVA (mayor entre costo y escala, + recargos)</td><td>${formatearMoneda(desglose.subtotalAntesMargen, config.moneda)}</td></tr>
             <tr class="discount-row"><td>Descuento (${desglose.descuentoPercent}%)</td><td>- ${formatearMoneda(desglose.montoDescuento, config.moneda)}</td></tr>
-            <tr class="subtotal-row"><td>Subtotal</td><td>${formatearMoneda(desglose.subtotalConDescuento, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Subtotal gravado</td><td>${formatearMoneda(desglose.subtotalConDescuento, config.moneda)}</td></tr>
             <tr><td>IVA (${desglose.ivaPercent}%)</td><td>${formatearMoneda(desglose.montoIva, config.moneda)}</td></tr>
-            <tr class="total-row"><td>TOTAL ESTIMADO</td><td>${formatearMoneda(desglose.total, config.moneda)}</td></tr>
+            <tr class="total-row"><td>TOTAL FINAL CON IVA</td><td>${formatearMoneda(desglose.total, config.moneda)}</td></tr>
             <tr><td>Costo mensual estimado (promedio)</td><td>${formatearMoneda(costoMensualEstimado, config.moneda)}</td></tr>
           </tbody>
         </table>
@@ -1977,9 +2234,9 @@ function construirCuerpoResultadoMysteryShopper(resultado, config) {
         <div class="result-block">
           <h3>Datos del cliente</h3>
           <dl>
-            <dt>Cliente</dt><dd>${inputs.clientName}</dd>
-            <dt>Contacto</dt><dd>${inputs.contactName || '-'}</dd>
-            <dt>Fecha</dt><dd>${inputs.quoteDate}</dd>
+            <dt>Cliente</dt><dd>${textoSeguro(inputs.clientName)}</dd>
+            <dt>Contacto</dt><dd>${textoSeguro(inputs.contactName || '-')}</dd>
+            <dt>Fecha</dt><dd>${textoSeguro(inputs.quoteDate)}</dd>
             <dt>Vigencia</dt><dd>${inputs.validity ? inputs.validity + ' días' : '-'}</dd>
           </dl>
         </div>
@@ -2026,14 +2283,14 @@ function construirCuerpoResultadoMysteryShopper(resultado, config) {
             <tr><td colspan="2"><strong>E. Resumen y total</strong></td></tr>
             <tr><td>Subtotal mano de obra (campo + remoto + coordinación)</td><td>${formatearMoneda(desglose.subtotalManoObra, config.moneda)}</td></tr>
             <tr><td>Subtotal general (mano de obra + viáticos)</td><td>${formatearMoneda(desglose.subtotalGeneral, config.moneda)}</td></tr>
-            <tr><td>Costo adicional manual ${inputs.extraCostReason ? '(' + inputs.extraCostReason + ')' : ''}</td><td>${formatearMoneda(desglose.costoAdicionalManual, config.moneda)}</td></tr>
+            <tr><td>Costo adicional manual ${inputs.extraCostReason ? '(' + textoSeguro(inputs.extraCostReason) + ')' : ''}</td><td>${formatearMoneda(desglose.costoAdicionalManual, config.moneda)}</td></tr>
             <tr class="subtotal-row"><td>Subtotal antes de margen</td><td>${formatearMoneda(desglose.subtotalAntesMargen, config.moneda)}</td></tr>
             <tr><td>Margen de ganancia (${desglose.margenPercent}%)</td><td>${formatearMoneda(desglose.margenComercial, config.moneda)}</td></tr>
-            <tr class="subtotal-row"><td>Subtotal con margen</td><td>${formatearMoneda(desglose.subtotalConMargen, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Subtotal con margen (precio comercial antes de IVA)</td><td>${formatearMoneda(desglose.subtotalConMargen, config.moneda)}</td></tr>
             <tr class="discount-row"><td>Descuento (${desglose.descuentoPercent}%)</td><td>- ${formatearMoneda(desglose.montoDescuento, config.moneda)}</td></tr>
-            <tr class="subtotal-row"><td>Subtotal</td><td>${formatearMoneda(desglose.subtotalConDescuento, config.moneda)}</td></tr>
+            <tr class="subtotal-row"><td>Subtotal gravado</td><td>${formatearMoneda(desglose.subtotalConDescuento, config.moneda)}</td></tr>
             <tr><td>IVA (${desglose.ivaPercent}%)</td><td>${formatearMoneda(desglose.montoIva, config.moneda)}</td></tr>
-            <tr class="total-row"><td>TOTAL PROPUESTA</td><td>${formatearMoneda(desglose.total, config.moneda)}</td></tr>
+            <tr class="total-row"><td>TOTAL FINAL CON IVA</td><td>${formatearMoneda(desglose.total, config.moneda)}</td></tr>
           </tbody>
         </table>
       </div>
@@ -2067,7 +2324,7 @@ function renderResultado(resultado, config) {
       <div class="result-header">
         <div>
           <h2>Cotización ${numeroCotizacion}</h2>
-          <p class="muted">${inputs.clientName} · ${SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType} · ${inputs.projectName || 'Sin nombre de proyecto'}</p>
+          <p class="muted">${textoSeguro(inputs.clientName)} · ${textoSeguro(SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType)} · ${textoSeguro(inputs.projectName || 'Sin nombre de proyecto')}</p>
         </div>
         <div class="total-badge">
           <span class="total-label">Total estimado</span>
@@ -2084,12 +2341,12 @@ function renderResultado(resultado, config) {
         Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo, ubicación de los puntos de venta y requerimientos adicionales del cliente.
       </div>
 
-      ${inputs.notes ? `<div class="result-block"><h3>Observaciones</h3><p>${inputs.notes}</p></div>` : ''}
+      ${inputs.notes ? `<div class="result-block"><h3>Observaciones</h3><p>${textoSeguro(inputs.notes)}</p></div>` : ''}
 
       <div class="button-row">
         <button class="btn btn-secondary" id="btnVistaPrevia">Vista previa</button>
         <button class="btn btn-secondary" id="btnImprimir">Imprimir</button>
-        <button class="btn btn-secondary" id="btnPdfCliente">Descargar PDF (cliente)</button>
+        <button class="btn btn-secondary" id="btnPdfCliente" disabled title="Disponible después de la autorización">PDF cliente (requiere autorización)</button>
         <button class="btn btn-secondary" id="btnPdfInterno">Descargar PDF (interno)</button>
         <button class="btn btn-primary" id="btnGuardarCotizacion">Guardar en historial</button>
       </div>
@@ -2098,7 +2355,6 @@ function renderResultado(resultado, config) {
 
   document.getElementById('btnVistaPrevia').addEventListener('click', () => mostrarVistaPrevia(resultado, config, numeroCotizacion));
   document.getElementById('btnImprimir').addEventListener('click', () => window.print());
-  document.getElementById('btnPdfCliente').addEventListener('click', () => generarPdf(resultado, config, numeroCotizacion, 'cliente'));
   document.getElementById('btnPdfInterno').addEventListener('click', () => generarPdf(resultado, config, numeroCotizacion, 'interno'));
   document.getElementById('btnGuardarCotizacion').addEventListener('click', () => guardarCotizacionEnHistorial(resultado, numeroCotizacion));
 
@@ -2138,7 +2394,17 @@ function getNextQuoteNumberPreview() {
   return `COT-${year}-${String(current).padStart(3, '0')} (provisorio)`;
 }
 
-function guardarCotizacionEnHistorial(resultado, numeroPreview) {
+async function guardarCotizacionEnHistorial(resultado, numeroPreview) {
+  if (APP_STATE.guardandoCotizacion) return null;
+  APP_STATE.guardandoCotizacion = true;
+  const botonGuardar = document.getElementById('btnGuardarCotizacion');
+  const textoOriginalBoton = botonGuardar?.textContent || 'Guardar en historial';
+  if (botonGuardar) {
+    botonGuardar.disabled = true;
+    botonGuardar.textContent = 'Guardando...';
+  }
+
+  try {
   const historial = getHistory();
   const { inputs, desglose } = resultado;
   const esMS = esMysteryShopper(inputs);
@@ -2159,8 +2425,13 @@ function guardarCotizacionEnHistorial(resultado, numeroPreview) {
     ? `${inputs.msAseguradorasCount || 0} emp. · ${inputs.msSucursalesPresencial || 0} suc.`
     : `${inputs.pdvCount} PDV`;
 
+  const esNuevaVersion = existing?.estado === 'Cambios solicitados';
+
   const record = {
-    id: existing ? existing.id : cryptoId(),
+    id: existing && !esNuevaVersion ? existing.id : cryptoId(),
+    supabaseId: existing && !esNuevaVersion ? existing.supabaseId : null,
+    version: esNuevaVersion ? (Number(existing.version) || 1) + 1 : (Number(existing?.version) || 1),
+    cotizacionAnteriorId: esNuevaVersion ? existing.supabaseId : (existing?.cotizacionAnteriorId || null),
     numero,
     cliente: inputs.clientName,
     fecha: inputs.quoteDate,
@@ -2168,7 +2439,8 @@ function guardarCotizacionEnHistorial(resultado, numeroPreview) {
     pdv: alcance,
     zona: esMS ? 'asuncion' : inputs.zone,
     total: desglose.total,
-    estado: existing ? existing.estado : 'Borrador',
+    prioridad: existing?.prioridad || 'media',
+    estado: esNuevaVersion ? 'Borrador' : (existing ? existing.estado : 'Borrador'),
     resultado, // se guarda el objeto completo para poder ver/editar/duplicar/generar PDF luego
   };
 
@@ -2181,7 +2453,44 @@ function guardarCotizacionEnHistorial(resultado, numeroPreview) {
 
   saveHistory(historial);
   APP_STATE.editingQuoteId = record.id;
-  alert(`Cotización ${numero} guardada correctamente en el historial.`);
+
+  if (!window.CotizadorSupabase || !window.USUARIO_ACTUAL) {
+    alert(`Cotización ${numero} guardada localmente. Cuando inicies sesión se podrá sincronizar con Supabase.`);
+    return record;
+  }
+
+  try {
+    const cotizacionDb = await window.CotizadorSupabase.guardarCotizacion(record, getConfig());
+    record.supabaseId = cotizacionDb.id;
+    record.numero = cotizacionDb.codigo || record.numero;
+    record.estado = 'Borrador';
+    const actualizado = getHistory();
+    const idx = actualizado.findIndex((q) => q.id === record.id);
+    if (idx >= 0) actualizado[idx] = record;
+    saveHistory(actualizado);
+    limpiarFormularioCotizacion();
+    alert(`Cotización ${record.numero} guardada correctamente en Supabase. El formulario quedó listo para una nueva cotización.`);
+    return record;
+  } catch (error) {
+    console.error('No se pudo guardar la cotización en Supabase:', error);
+    if (error.cotizacionParcial?.id) {
+      record.supabaseId = error.cotizacionParcial.id;
+      record.numero = error.cotizacionParcial.codigo || record.numero;
+      const actualizado = getHistory();
+      const idx = actualizado.findIndex((q) => q.id === record.id);
+      if (idx >= 0) actualizado[idx] = record;
+      saveHistory(actualizado);
+    }
+    alert(`La cotización ${record.numero} quedó guardada como respaldo local, pero no se completó la sincronización con Supabase.\n\nDetalle: ${error.message}`);
+    return record;
+  }
+  } finally {
+    APP_STATE.guardandoCotizacion = false;
+    if (botonGuardar) {
+      botonGuardar.disabled = false;
+      botonGuardar.textContent = textoOriginalBoton;
+    }
+  }
 }
 
 /* ==========================================================================
@@ -2310,7 +2619,7 @@ function renderResultadoRapido(resultado, config, inputs) {
 
   const subtitulo = esMS
     ? `${inputs.msAseguradorasCount || 0} empresas · ${inputs.msSucursalesPresencial || 0} sucursales`
-    : `${inputs.pdvCount} PDV · ${ZONA_LABELS[inputs.zone] || inputs.zone}${inputs.department ? ' - ' + inputs.department : ''}`;
+    : `${Number(inputs.pdvCount) || 0} PDV · ${textoSeguro(ZONA_LABELS[inputs.zone] || inputs.zone)}${inputs.department ? ' - ' + textoSeguro(inputs.department) : ''}`;
 
   const horasCampo = esMS ? desglose.horasHombreCampo : desglose.horasHombreTotales;
   const dotacion = esMS ? desglose.shoppersNecesarios : desglose.relevadoresRecomendados;
@@ -2470,7 +2779,7 @@ function renderTablaPerfiles(config) {
     }, {});
     return `
     <tr data-id="${p.id}">
-      <td><input type="text" class="input-sm perfil-nombre" value="${p.nombre}"></td>
+      <td><input type="text" class="input-sm perfil-nombre" value="${textoSeguro(p.nombre)}"></td>
       <td><input type="text" class="input-sm perfil-costo" value="${formatMilesDisplay(p.costoPorHora)}" inputmode="numeric"></td>
       <td><input type="number" class="input-sm perfil-aguinaldo" value="${p.aguinaldoPercent}" min="0" step="0.01"></td>
       <td><input type="number" class="input-sm perfil-ips" value="${p.ipsPatronalPercent}" min="0" step="0.5"></td>
@@ -2530,7 +2839,7 @@ function renderTablaTareas(config) {
   const perfiles = config.officeProfiles || [];
 
   const opcionesPerfil = (perfilIdSeleccionado) => perfiles.map((p) =>
-    `<option value="${p.id}" ${p.id === perfilIdSeleccionado ? 'selected' : ''}>${p.nombre}</option>`
+    `<option value="${p.id}" ${p.id === perfilIdSeleccionado ? 'selected' : ''}>${textoSeguro(p.nombre)}</option>`
   ).join('') || '<option value="">(sin perfiles disponibles)</option>';
 
   const opcionesAplica = (valorActual) => ['ambos', 'auditoria', 'mysteryShopper'].map((v) => {
@@ -2540,7 +2849,7 @@ function renderTablaTareas(config) {
 
   tbody.innerHTML = tareas.map((t) => `
     <tr data-id="${t.id}">
-      <td><input type="text" class="input-sm tarea-nombre" value="${t.nombre}" style="min-width:180px;"></td>
+      <td><input type="text" class="input-sm tarea-nombre" value="${textoSeguro(t.nombre)}" style="min-width:180px;"></td>
       <td><select class="input-sm tarea-perfil">${opcionesPerfil(t.perfilId)}</select></td>
       <td><input type="number" class="input-sm tarea-horas-base" value="${t.horasBase}" min="0" step="0.5"></td>
       <td><input type="number" class="input-sm tarea-horas-pdv" value="${t.horasPorPdv}" min="0" step="0.01"></td>
@@ -2861,31 +3170,39 @@ function renderHistorial() {
   const zonaLabel = ZONA_LABELS;
 
   if (filtrado.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted">No hay cotizaciones que coincidan con la búsqueda.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">No hay cotizaciones que coincidan con la búsqueda.</td></tr>';
     return;
   }
 
   tbody.innerHTML = filtrado.slice().reverse().map((q) => `
     <tr>
-      <td>${q.numero}</td>
-      <td>${q.cliente}</td>
-      <td>${SERVICE_TYPE_LABELS[q.servicio] || SERVICE_TYPE_LABELS.auditoria}</td>
-      <td>${q.fecha}</td>
-      <td>${q.pdv}</td>
-      <td>${zonaLabel[q.zona] || q.zona}</td>
+      <td>${textoSeguro(q.numero)}${Number(q.version) > 1 ? `<br><small class="muted">Versión ${Number(q.version)}</small>` : ''}</td>
+      <td>${textoSeguro(q.cliente)}</td>
+      <td>${textoSeguro(SERVICE_TYPE_LABELS[q.servicio] || SERVICE_TYPE_LABELS.auditoria)}</td>
+      <td>${textoSeguro(q.fecha)}</td>
+      <td>${textoSeguro(q.pdv)}</td>
+      <td>${textoSeguro(zonaLabel[q.zona] || q.zona)}</td>
       <td>${formatearMoneda(q.total, getConfig().moneda)}</td>
       <td>
-        <select class="input-sm select-estado" data-id="${q.id}">
-          ${['Borrador', 'Enviada', 'Aprobada', 'Rechazada', 'Vencida'].map((e) =>
+        ${q.supabaseId ? `<span class="status-badge status-${String(q.estado).toLowerCase().replace(/[^a-z0-9]+/g, '-')}">${textoSeguro(q.estado)}</span>` : `<select class="input-sm select-estado" data-id="${q.id}">
+          ${['Borrador', 'Pendiente de aprobación', 'En revisión', 'Cambios solicitados', 'Aprobada', 'Rechazada', 'Enviada al cliente', 'Vencida', 'Cancelada'].map((e) =>
             `<option value="${e}" ${e === q.estado ? 'selected' : ''}>${e}</option>`).join('')}
-        </select>
+        </select>`}
       </td>
+      <td>${q.estado === 'Aprobada' ? textoSeguro(q.aprobadaPorNombre || 'Sin identificar') : '—'}</td>
       <td class="col-actions">
         <button class="btn btn-tiny btn-secondary btn-ver" data-id="${q.id}">Ver</button>
-        <button class="btn btn-tiny btn-secondary btn-editar" data-id="${q.id}">Editar</button>
-        <button class="btn btn-tiny btn-secondary btn-duplicar" data-id="${q.id}">Duplicar</button>
-        <button class="btn btn-tiny btn-secondary btn-pdf" data-id="${q.id}">PDF</button>
-        <button class="btn btn-tiny btn-danger btn-eliminar" data-id="${q.id}">Eliminar</button>
+        ${puedeModificarCotizacion(q) ? `<button class="btn btn-tiny btn-secondary btn-editar" data-id="${q.id}">Editar</button>` : ''}
+        ${puedeModificarCotizacion(q) ? `<button class="btn btn-tiny btn-secondary btn-duplicar" data-id="${q.id}">Duplicar</button>` : ''}
+        ${puedeVerInformacionInterna() ? `<button class="btn btn-tiny btn-secondary btn-pdf" data-id="${q.id}">PDF interno</button>` : ''}
+        ${q.estado === 'Aprobada' ? `<button class="btn btn-tiny btn-primary btn-pdf-cliente" data-id="${q.id}">PDF cliente</button>` : ''}
+        ${puedeEnviarAprobacion(q) ? `<span class="priority-send-group">
+          <select class="input-sm select-prioridad" data-id="${q.id}" title="Prioridad para el jefe">
+            ${['alta', 'media', 'baja'].map((p) => `<option value="${p}" ${p === (q.prioridad || 'media') ? 'selected' : ''}>${PRIORIDAD_LABELS[p]}</option>`).join('')}
+          </select>
+          <button class="btn btn-tiny btn-primary btn-enviar-jefe" data-id="${q.id}">Enviar para autorización</button>
+        </span>` : ''}
+        ${!q.supabaseId && puedeModificarCotizacion(q) ? `<button class="btn btn-tiny btn-danger btn-eliminar" data-id="${q.id}">Eliminar</button>` : ''}
       </td>
     </tr>
   `).join('');
@@ -2937,6 +3254,25 @@ function renderHistorial() {
     });
   });
 
+  tbody.querySelectorAll('.btn-pdf-cliente').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const record = getHistory().find((q) => q.id === e.target.getAttribute('data-id'));
+      generarPdf(record.resultado, getConfig(), record.numero, 'cliente', {
+        estado: record.estado,
+        aprobadaPorNombre: record.aprobadaPorNombre,
+        aprobadaEn: record.aprobadaEn
+      });
+    });
+  });
+
+  tbody.querySelectorAll('.btn-enviar-jefe').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      const record = getHistory().find((q) => q.id === e.target.getAttribute('data-id'));
+      const prioridad = e.target.closest('.priority-send-group')?.querySelector('.select-prioridad')?.value || 'media';
+      await enviarCotizacionAlJefe(record, e.target, prioridad);
+    });
+  });
+
   tbody.querySelectorAll('.btn-eliminar').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       if (!confirm('¿Eliminar esta cotización del historial? Esta acción no se puede deshacer.')) return;
@@ -2946,6 +3282,514 @@ function renderHistorial() {
       renderHistorial();
     });
   });
+}
+
+function puedeEnviarAprobacion(record) {
+  const rol = window.USUARIO_ACTUAL?.rol;
+  return !!record.supabaseId && record.estado === 'Borrador' &&
+    ['administrador', 'jefe_aprobador', 'analista', 'comercial'].includes(rol);
+}
+
+function puedeModificarCotizacion(record) {
+  const perfil = window.USUARIO_ACTUAL;
+  if (!perfil) return true;
+  if (perfil.rol === 'administrador') return true;
+  return ['jefe_aprobador', 'analista', 'comercial'].includes(perfil.rol) &&
+    (!record.creadoPor || record.creadoPor === perfil.id) &&
+    ['Borrador', 'Cambios solicitados'].includes(record.estado);
+}
+
+function puedeVerInformacionInterna() {
+  const rol = window.USUARIO_ACTUAL?.rol;
+  return !rol || ['administrador', 'jefe_aprobador', 'analista', 'comercial'].includes(rol);
+}
+
+async function enviarCotizacionAlJefe(record, boton, prioridad = 'media') {
+  if (!record?.supabaseId) {
+    alert('Primero guardá la cotización en Supabase.');
+    return;
+  }
+  try {
+    boton.disabled = true;
+    boton.textContent = 'Enviando...';
+    const jefes = await window.CotizadorSupabase.listarJefes();
+    if (!jefes.length) throw new Error('No existe ningún jefe aprobador activo.');
+
+    let jefe = jefes[0];
+    if (jefes.length > 1) {
+      const opciones = jefes.map((j, i) => `${i + 1}. ${j.nombre}`).join('\n');
+      const seleccion = Number(prompt(`Elegí el jefe aprobador:\n\n${opciones}`, '1'));
+      if (!seleccion || !jefes[seleccion - 1]) return;
+      jefe = jefes[seleccion - 1];
+    }
+    if (!confirm(`¿Enviar ${record.numero} a ${jefe.nombre} para su aprobación?`)) return;
+
+    await window.CotizadorSupabase.actualizarPrioridad(record.supabaseId, prioridad);
+    await window.CotizadorSupabase.enviarAprobacion(record.supabaseId, jefe.id);
+    await window.CotizadorSupabase.notificarCotizacion(record.supabaseId, 'enviada_aprobacion');
+    const historial = getHistory();
+    const actual = historial.find((q) => q.id === record.id);
+    if (actual) {
+      actual.estado = 'Pendiente de aprobación';
+      actual.aprobadorId = jefe.id;
+      actual.prioridad = prioridad;
+      saveHistory(historial);
+    }
+    renderHistorial();
+    alert(`Cotización ${record.numero} enviada a ${jefe.nombre} con prioridad ${PRIORIDAD_LABELS[prioridad].replace(/^[^ ]+ /, '').toLowerCase()}.`);
+  } catch (error) {
+    console.error('No se pudo enviar la cotización:', error);
+    alert(`No se pudo enviar la cotización al jefe.\n\nDetalle: ${error.message}`);
+  } finally {
+    boton.disabled = false;
+    boton.textContent = 'Enviar para autorización';
+  }
+}
+
+async function sincronizarHistorialSupabase() {
+  if (!window.CotizadorSupabase || !window.USUARIO_ACTUAL) return;
+  try {
+    const remotas = await window.CotizadorSupabase.listarCotizaciones();
+    const localesSinSincronizar = getHistory().filter((q) => !q.supabaseId);
+    saveHistory([...localesSinSincronizar, ...remotas]);
+    if (APP_STATE.currentView === 'historial') renderHistorial();
+    if (APP_STATE.currentView === 'resumen') renderResumen();
+  } catch (error) {
+    console.error('No se pudo sincronizar el historial con Supabase:', error);
+  }
+}
+
+function aplicarPermisosPorRol() {
+  const rol = window.USUARIO_ACTUAL?.rol;
+  if (!rol) return;
+  const puedeCrear = ['administrador', 'jefe_aprobador', 'analista', 'comercial'].includes(rol);
+  const puedeConfigurar = rol === 'administrador';
+  const puedeAutorizar = ['administrador', 'jefe_aprobador'].includes(rol);
+  const puedeResponderCambios = ['administrador', 'analista', 'comercial'].includes(rol);
+  document.querySelectorAll('.nav-link[data-view="nueva"], .nav-link[data-view="rapido"]')
+    .forEach((el) => { el.style.display = puedeCrear ? '' : 'none'; });
+  const linkConfig = document.querySelector('.nav-link[data-view="config"]');
+  if (linkConfig) linkConfig.style.display = puedeConfigurar ? '' : 'none';
+  const linkAutorizaciones = document.getElementById('navAutorizaciones');
+  if (linkAutorizaciones) linkAutorizaciones.style.display = puedeAutorizar ? '' : 'none';
+  const linkCambios = document.getElementById('navCambios');
+  if (linkCambios) linkCambios.style.display = puedeResponderCambios ? '' : 'none';
+  if (!puedeCrear && APP_STATE.currentView === 'nueva') cambiarVista('historial');
+}
+
+function initAutorizaciones() {
+  const boton = document.getElementById('btnActualizarAutorizaciones');
+  if (boton) boton.addEventListener('click', renderAutorizaciones);
+  const filtro = document.getElementById('filtroPrioridadAutorizaciones');
+  if (filtro) filtro.addEventListener('change', () => {
+    APP_STATE.filtroPrioridadAutorizaciones = filtro.value;
+    renderAutorizaciones();
+  });
+}
+
+async function actualizarContadorAutorizaciones() {
+  const badge = document.getElementById('contadorAutorizaciones');
+  const rol = window.USUARIO_ACTUAL?.rol;
+  if (!badge || !['administrador', 'jefe_aprobador'].includes(rol) || !window.CotizadorSupabase) return;
+  try {
+    const cantidad = await window.CotizadorSupabase.contarAutorizaciones();
+    badge.textContent = String(cantidad);
+    badge.style.display = cantidad > 0 ? 'inline-flex' : 'none';
+    badge.setAttribute('aria-label', `${cantidad} cotizaciones pendientes de autorización`);
+  } catch (error) {
+    console.error('No se pudo actualizar el contador de autorizaciones:', error);
+  }
+}
+
+function initCambiosSolicitados() {
+  const boton = document.getElementById('btnActualizarCambios');
+  if (boton) boton.addEventListener('click', renderCambiosSolicitados);
+}
+
+async function actualizarContadoresCambios() {
+  const badgeCambios = document.getElementById('contadorCambiosSolicitados');
+  const badgeHistorial = document.getElementById('contadorCambiosHistorial');
+  const rol = window.USUARIO_ACTUAL?.rol;
+  const puedeResponder = ['administrador', 'analista', 'comercial'].includes(rol);
+  if (!window.CotizadorSupabase || !puedeResponder) {
+    [badgeCambios, badgeHistorial].forEach((badge) => {
+      if (badge) badge.style.display = 'none';
+    });
+    return;
+  }
+  try {
+    const cantidad = await window.CotizadorSupabase.contarCambiosSolicitadosPropios();
+    [badgeCambios, badgeHistorial].forEach((badge) => {
+      if (!badge) return;
+      badge.textContent = String(cantidad);
+      badge.style.display = cantidad > 0 ? 'inline-flex' : 'none';
+      badge.setAttribute('aria-label', `${cantidad} cotizaciones devueltas para cambios`);
+    });
+  } catch (error) {
+    console.error('No se pudieron actualizar los contadores de cambios:', error);
+  }
+}
+
+function textoSeguro(valor) {
+  const nodo = document.createElement('div');
+  nodo.textContent = valor == null ? '' : String(valor);
+  return nodo.innerHTML;
+}
+
+async function renderAutorizaciones() {
+  const contenedor = document.getElementById('listaAutorizaciones');
+  const mensaje = document.getElementById('autorizacionesMensaje');
+  if (!contenedor || !window.CotizadorSupabase) return;
+  contenedor.innerHTML = '<div class="card muted">Cargando cotizaciones pendientes...</div>';
+  mensaje.style.display = 'none';
+
+  try {
+    const todas = await window.CotizadorSupabase.listarAutorizaciones();
+    const ordenPrioridad = { alta: 0, media: 1, baja: 2 };
+    const filtroPrioridad = document.getElementById('filtroPrioridadAutorizaciones')?.value || '';
+    const cotizaciones = todas
+      .filter((q) => !filtroPrioridad || (q.prioridad || 'media') === filtroPrioridad)
+      .sort((a, b) => {
+        const prioridad = (ordenPrioridad[a.prioridad || 'media'] ?? 1) - (ordenPrioridad[b.prioridad || 'media'] ?? 1);
+        return prioridad || String(a.enviada_aprobacion_en || '').localeCompare(String(b.enviada_aprobacion_en || ''));
+      });
+    await actualizarContadorAutorizaciones();
+    if (!cotizaciones.length) {
+      contenedor.innerHTML = `<div class="card muted">${todas.length ? 'No hay cotizaciones con la prioridad seleccionada.' : 'No hay cotizaciones pendientes de autorización.'}</div>`;
+      return;
+    }
+
+    contenedor.innerHTML = cotizaciones.map((q) => {
+      const costos = (q.cotizacion_costos || []).slice().sort((a, b) => a.orden - b.orden);
+      const observaciones = q.cotizacion_observaciones || [];
+      const puedeComentar = q.estado === 'en_revision';
+      const filas = costos.map((costo) => {
+        const notas = observaciones.filter((o) => o.costo_id === costo.id);
+        return `
+          <tr class="approval-cost-row">
+            <td>${textoSeguro(costo.categoria)}</td>
+            <td>
+              <strong>${textoSeguro(costo.concepto)}</strong>
+              ${notas.map((o) => {
+                const editable = puedeComentar && o.estado === 'pendiente' && o.creado_por === window.USUARIO_ACTUAL?.id;
+                return `<div class="approval-existing-note">
+                  <strong>Observación:</strong> ${textoSeguro(o.comentario)}
+                  ${o.importe_propuesto != null ? `<br><strong>Importe propuesto:</strong> ${formatearMoneda(Number(o.importe_propuesto), 'PYG')}` : ''}
+                  <br><small>Estado: ${textoSeguro(o.estado)}</small>
+                  ${editable ? `<div class="button-row" style="margin-top:8px;">
+                    <button type="button" class="btn btn-tiny btn-secondary btn-editar-observacion"
+                      data-id="${o.id}" data-comentario="${encodeURIComponent(o.comentario || '')}"
+                      data-importe="${o.importe_propuesto == null ? '' : Number(o.importe_propuesto)}">Editar</button>
+                    <button type="button" class="btn btn-tiny btn-danger btn-eliminar-observacion" data-id="${o.id}">Eliminar</button>
+                  </div>` : ''}
+                </div>`;
+              }).join('')}
+            </td>
+            <td>${formatearMoneda(Number(costo.importe), 'PYG')}</td>
+            <td>
+              ${puedeComentar ? `<div class="approval-comment-grid">
+                <div><label>Comentario</label><textarea class="observacion-comentario" data-costo-id="${costo.id}" placeholder="Escriba la observación para este costo"></textarea></div>
+                <div><label>Importe propuesto</label><input type="text" inputmode="numeric" class="observacion-importe" data-costo-id="${costo.id}" placeholder="Opcional"></div>
+                <button type="button" class="btn btn-small btn-secondary btn-guardar-observacion" data-cotizacion-id="${q.id}" data-costo-id="${costo.id}">Guardar observación</button>
+              </div>` : '<span class="muted">Inicie la revisión para comentar.</span>'}
+            </td>
+          </tr>`;
+      }).join('');
+
+      return `<article class="card approval-card" data-cotizacion-id="${q.id}">
+        <div class="approval-card-header">
+          <div>
+            <h2>${textoSeguro(q.codigo)} · ${textoSeguro(q.cliente_nombre)}</h2>
+            <div class="approval-meta">${textoSeguro(q.tipo_servicio)} · ${textoSeguro(q.fecha_cotizacion)} · Estado: ${textoSeguro(q.estado)}</div>
+            <span class="priority-badge priority-${textoSeguro(q.prioridad || 'media')}">${PRIORIDAD_LABELS[q.prioridad || 'media']}</span>
+          </div>
+          <div><strong>Total: ${formatearMoneda(Number(q.total_final), 'PYG')}</strong></div>
+        </div>
+        ${q.estado === 'pendiente_aprobacion' ? `<div class="button-row"><button type="button" class="btn btn-primary btn-iniciar-revision" data-id="${q.id}">Iniciar revisión</button></div>` : ''}
+        <div class="table-wrapper">
+          <table class="data-table"><thead><tr><th>Categoría</th><th>Concepto</th><th>Importe actual</th><th>Observación / propuesta</th></tr></thead><tbody>${filas}</tbody></table>
+        </div>
+        ${q.estado === 'en_revision' ? `<div class="approval-decision">
+          <label for="decision-${q.id}"><strong>Comentario general de la decisión</strong></label>
+          <textarea id="decision-${q.id}" class="decision-comentario" placeholder="Opcional al autorizar; recomendado al devolver o rechazar"></textarea>
+          <div class="approval-actions">
+            <button type="button" class="btn btn-primary btn-decidir" data-id="${q.id}" data-decision="aprobar">Autorizar cotización</button>
+            <button type="button" class="btn btn-secondary btn-decidir" data-id="${q.id}" data-decision="solicitar_cambios">Devolver para cambios</button>
+            <button type="button" class="btn btn-danger btn-decidir" data-id="${q.id}" data-decision="rechazar">Rechazar</button>
+          </div>
+        </div>` : ''}
+      </article>`;
+    }).join('');
+
+    contenedor.querySelectorAll('.observacion-importe').forEach(attachMilesFormatting);
+    enlazarAccionesAutorizacion(contenedor);
+  } catch (error) {
+    console.error('Error cargando autorizaciones:', error);
+    contenedor.innerHTML = '';
+    mensaje.textContent = `No se pudieron cargar las autorizaciones: ${error.message}`;
+    mensaje.className = 'alert alert-danger';
+    mensaje.style.display = 'block';
+  }
+}
+
+function enlazarAccionesAutorizacion(contenedor) {
+  contenedor.querySelectorAll('.btn-iniciar-revision').forEach((boton) => {
+    boton.addEventListener('click', async () => {
+      await ejecutarAccionAutorizacion(boton, async () => {
+        await window.CotizadorSupabase.iniciarRevision(boton.dataset.id);
+      }, 'Revisión iniciada correctamente.');
+    });
+  });
+
+  contenedor.querySelectorAll('.btn-guardar-observacion').forEach((boton) => {
+    boton.addEventListener('click', async () => {
+      const fila = boton.closest('tr');
+      const comentario = fila.querySelector('.observacion-comentario').value.trim();
+      const importe = parseMilesValue(fila.querySelector('.observacion-importe').value);
+      if (!comentario) {
+        alert('Escriba un comentario para guardar la observación.');
+        return;
+      }
+      await ejecutarAccionAutorizacion(boton, async () => {
+        await window.CotizadorSupabase.crearObservacion(
+          boton.dataset.cotizacionId, boton.dataset.costoId, comentario, importe
+        );
+      }, 'Observación guardada correctamente.');
+    });
+  });
+
+  contenedor.querySelectorAll('.btn-editar-observacion').forEach((boton) => {
+    boton.addEventListener('click', async () => {
+      const comentarioActual = decodeURIComponent(boton.dataset.comentario || '');
+      const comentario = prompt('Editar comentario:', comentarioActual);
+      if (comentario === null) return;
+      if (!comentario.trim()) {
+        alert('El comentario no puede quedar vacío.');
+        return;
+      }
+      const importeActual = boton.dataset.importe || '';
+      const importeTexto = prompt('Editar importe propuesto (puede dejarlo vacío):', importeActual);
+      if (importeTexto === null) return;
+      const importe = parseMilesValue(importeTexto);
+      await ejecutarAccionAutorizacion(boton, async () => {
+        await window.CotizadorSupabase.editarObservacion(boton.dataset.id, comentario.trim(), importe);
+      }, 'Observación actualizada correctamente.');
+    });
+  });
+
+  contenedor.querySelectorAll('.btn-eliminar-observacion').forEach((boton) => {
+    boton.addEventListener('click', async () => {
+      if (!confirm('¿Eliminar esta observación?')) return;
+      await ejecutarAccionAutorizacion(boton, async () => {
+        await window.CotizadorSupabase.eliminarObservacion(boton.dataset.id);
+      }, 'Observación eliminada correctamente.');
+    });
+  });
+
+  contenedor.querySelectorAll('.btn-decidir').forEach((boton) => {
+    boton.addEventListener('click', async () => {
+      const tarjeta = boton.closest('.approval-card');
+      const comentario = tarjeta.querySelector('.decision-comentario').value.trim();
+      if (boton.dataset.decision !== 'aprobar' && !comentario) {
+        alert('Escriba el motivo antes de devolver o rechazar la cotización.');
+        return;
+      }
+      const etiquetas = { aprobar: 'autorizar', solicitar_cambios: 'devolver para cambios', rechazar: 'rechazar' };
+      if (!confirm(`¿Confirma que desea ${etiquetas[boton.dataset.decision]} esta cotización?`)) return;
+      await ejecutarAccionAutorizacion(boton, async () => {
+        await window.CotizadorSupabase.decidirCotizacion(boton.dataset.id, boton.dataset.decision, comentario);
+        const tipoNotificacion = {
+          aprobar: 'aprobada',
+          solicitar_cambios: 'cambios_solicitados',
+          rechazar: 'rechazada'
+        }[boton.dataset.decision];
+        if (tipoNotificacion) {
+          await window.CotizadorSupabase.notificarCotizacion(boton.dataset.id, tipoNotificacion);
+        }
+        await sincronizarHistorialSupabase();
+      }, 'Decisión registrada correctamente.');
+    });
+  });
+}
+
+async function ejecutarAccionAutorizacion(boton, accion, mensaje) {
+  const textoOriginal = boton.textContent;
+  try {
+    boton.disabled = true;
+    boton.textContent = 'Procesando...';
+    await accion();
+    alert(mensaje);
+    await actualizarContadorAutorizaciones();
+    await renderAutorizaciones();
+  } catch (error) {
+    console.error('Error en autorización:', error);
+    alert(`No se pudo completar la acción.\n\nDetalle: ${error.message}`);
+  } finally {
+    boton.disabled = false;
+    boton.textContent = textoOriginal;
+  }
+}
+
+async function renderCambiosSolicitados() {
+  const contenedor = document.getElementById('listaCambios');
+  const mensaje = document.getElementById('cambiosMensaje');
+  if (!contenedor || !window.CotizadorSupabase) return;
+  contenedor.innerHTML = '<div class="card muted">Cargando cambios solicitados...</div>';
+  mensaje.style.display = 'none';
+  try {
+    const cotizaciones = await window.CotizadorSupabase.listarCambiosSolicitados();
+    await actualizarContadoresCambios();
+    APP_STATE.cambiosSolicitados = cotizaciones;
+    if (!cotizaciones.length) {
+      contenedor.innerHTML = '<div class="card muted">No hay cotizaciones con cambios solicitados.</div>';
+      return;
+    }
+    contenedor.innerHTML = cotizaciones.map((q) => {
+      const costos = Object.fromEntries((q.cotizacion_costos || []).map((c) => [c.id, c]));
+      const observaciones = (q.cotizacion_observaciones || []).slice().sort((a, b) =>
+        String(a.creado_en).localeCompare(String(b.creado_en))
+      );
+      const pendientes = observaciones.filter((o) => o.estado === 'pendiente');
+      const tarjetas = observaciones.map((o) => {
+        const costo = costos[o.costo_id] || {};
+        const pendiente = o.estado === 'pendiente';
+        return `<div class="approval-existing-note change-response-card">
+          <div><strong>${textoSeguro(costo.concepto || 'Concepto de costo')}</strong></div>
+          <div>Importe original: ${formatearMoneda(Number(o.importe_original || costo.importe || 0), 'PYG')}</div>
+          ${o.importe_propuesto != null ? `<div><strong>Importe propuesto: ${formatearMoneda(Number(o.importe_propuesto), 'PYG')}</strong></div>` : ''}
+          <p><strong>Observación:</strong> ${textoSeguro(o.comentario)}</p>
+          ${pendiente ? `<div class="change-response-form">
+            <label>Respuesta <span class="muted">(opcional)</span></label>
+            <textarea class="respuesta-observacion" placeholder="Puede explicar por qué acepta o rechaza el importe"></textarea>
+            <div class="button-row">
+              <button type="button" class="btn btn-small btn-primary btn-responder-observacion" data-id="${o.id}" data-aceptar="true">Aceptar propuesta</button>
+              <button type="button" class="btn btn-small btn-danger btn-responder-observacion" data-id="${o.id}" data-aceptar="false">Rechazar propuesta</button>
+            </div>
+          </div>` : `<div><strong>Respuesta:</strong> ${textoSeguro(o.respuesta || 'Sin comentario')} · Estado: ${textoSeguro(o.estado)}</div>`}
+        </div>`;
+      }).join('');
+      return `<article class="card approval-card change-quote-card" data-id="${q.id}">
+        <div class="approval-card-header">
+          <div><h2>${textoSeguro(q.codigo)} · ${textoSeguro(q.cliente_nombre)}</h2>
+          <div class="approval-meta">Total actual: ${formatearMoneda(Number(q.total_final), 'PYG')}</div></div>
+          <span class="status-badge status-cambios-solicitados">${pendientes.length} pendiente${pendientes.length === 1 ? '' : 's'}</span>
+        </div>
+        ${tarjetas || '<p class="muted">No hay observaciones registradas.</p>'}
+        ${pendientes.length === 0 ? `<div class="button-row"><button type="button" class="btn btn-primary btn-editar-tras-respuestas" data-id="${q.id}">Editar y recalcular cotización</button></div>` : ''}
+      </article>`;
+    }).join('');
+    enlazarAccionesCambios(contenedor);
+  } catch (error) {
+    console.error('Error cargando cambios solicitados:', error);
+    contenedor.innerHTML = '';
+    mensaje.textContent = `No se pudieron cargar los cambios solicitados: ${error.message}`;
+    mensaje.className = 'alert alert-danger';
+    mensaje.style.display = 'block';
+  }
+}
+
+function enlazarAccionesCambios(contenedor) {
+  contenedor.querySelectorAll('.btn-responder-observacion').forEach((boton) => {
+    boton.addEventListener('click', async () => {
+      const respuesta = boton.closest('.change-response-card').querySelector('.respuesta-observacion').value.trim();
+      const aceptar = boton.dataset.aceptar === 'true';
+      if (!confirm(`¿Confirma que desea ${aceptar ? 'aceptar' : 'rechazar'} esta propuesta?`)) return;
+      let aprobadaAutomaticamente = false;
+      await ejecutarAccionCambio(boton, async () => {
+        await window.CotizadorSupabase.responderObservacion(boton.dataset.id, aceptar, respuesta);
+        if (aceptar) {
+          const cotizacionId = boton.closest('.change-quote-card')?.dataset.id;
+          aprobadaAutomaticamente = await intentarAprobarFeedbackAceptado(cotizacionId);
+        }
+      }, () => aprobadaAutomaticamente
+        ? 'Propuestas aceptadas. La cotización fue recalculada y aprobada automáticamente.'
+        : 'Respuesta guardada correctamente.');
+    });
+  });
+  contenedor.querySelectorAll('.btn-editar-tras-respuestas').forEach((boton) => {
+    boton.addEventListener('click', () => {
+      const record = getHistory().find((q) => q.supabaseId === boton.dataset.id);
+      const cotizacionDb = (APP_STATE.cambiosSolicitados || []).find((q) => q.id === boton.dataset.id);
+      if (!record?.resultado?.inputs) {
+        alert('No se encontró el cálculo interno para editar esta cotización.');
+        return;
+      }
+      const copia = JSON.parse(JSON.stringify(record));
+      const aceptadas = (cotizacionDb?.cotizacion_observaciones || []).filter((o) =>
+        o.estado === 'aceptada' && o.importe_propuesto != null
+      );
+      const ajuste = aceptadas.reduce((total, o) =>
+        total + (Number(o.importe_propuesto) - Number(o.importe_original || 0)), 0
+      );
+      if (ajuste !== 0) {
+        const anterior = Number(copia.resultado.inputs.extraCostManual) || 0;
+        copia.resultado.inputs.extraCostManual = anterior + ajuste;
+        const conceptos = aceptadas.map((o) => {
+          const costo = (cotizacionDb.cotizacion_costos || []).find((c) => c.id === o.costo_id);
+          return costo?.concepto || 'concepto observado';
+        });
+        copia.resultado.inputs.extraCostReason = [
+          copia.resultado.inputs.extraCostReason,
+          `Ajuste por propuestas aceptadas: ${conceptos.join(', ')}`
+        ].filter(Boolean).join(' · ');
+      }
+      cargarCotizacionEnFormulario(copia);
+      cambiarVista('nueva');
+      alert(aceptadas.length
+        ? 'Las propuestas aceptadas fueron aplicadas como ajuste. Revise el nuevo cálculo y guárdelo para crear una nueva versión.'
+        : 'Revise el cálculo y guárdelo para crear una nueva versión.');
+    });
+  });
+}
+
+async function intentarAprobarFeedbackAceptado(cotizacionId) {
+  if (!cotizacionId) return false;
+  const cotizaciones = await window.CotizadorSupabase.listarCambiosSolicitados();
+  const cotizacion = cotizaciones.find((q) => q.id === cotizacionId);
+  if (!cotizacion) return false;
+  const observaciones = cotizacion.cotizacion_observaciones || [];
+  if (!observaciones.length || observaciones.some((o) => o.estado !== 'aceptada')) return false;
+
+  const record = getHistory().find((q) => q.supabaseId === cotizacionId);
+  if (!record?.resultado?.inputs) {
+    throw new Error('No se encontró el cálculo original para aplicar automáticamente las propuestas aceptadas.');
+  }
+
+  const inputs = JSON.parse(JSON.stringify(record.resultado.inputs));
+  const ajuste = observaciones.reduce((total, o) =>
+    total + (o.importe_propuesto == null ? 0 : Number(o.importe_propuesto) - Number(o.importe_original || 0)), 0
+  );
+  inputs.extraCostManual = (Number(inputs.extraCostManual) || 0) + ajuste;
+  if (ajuste !== 0) {
+    inputs.extraCostReason = [
+      inputs.extraCostReason,
+      'Ajuste automático por importes aceptados del jefe'
+    ].filter(Boolean).join(' · ');
+  }
+
+  const resultadoActualizado = calcularCotizacion(inputs, getConfig());
+  await window.CotizadorSupabase.aprobarCambiosAceptados(cotizacionId, resultadoActualizado);
+  await window.CotizadorSupabase.notificarCotizacion(cotizacionId, 'aprobada');
+  await sincronizarHistorialSupabase();
+  return true;
+}
+
+async function ejecutarAccionCambio(boton, accion, mensaje) {
+  const texto = boton.textContent;
+  try {
+    boton.disabled = true;
+    boton.textContent = 'Procesando...';
+    await accion();
+    alert(typeof mensaje === 'function' ? mensaje() : mensaje);
+    await actualizarContadoresCambios();
+    await renderCambiosSolicitados();
+  } catch (error) {
+    console.error('Error respondiendo observación:', error);
+    alert(`No se pudo guardar la respuesta.\n\nDetalle: ${error.message}`);
+  } finally {
+    boton.disabled = false;
+    boton.textContent = texto;
+  }
 }
 
 function cargarCotizacionEnFormulario(record) {
@@ -3024,6 +3868,16 @@ function construirHtmlPreviewAuditoria(resultado, config, numero, tipo) {
   if (inputs.requiresFotografia) entregables.push('Evidencia fotográfica');
 
   const tablaCostos = tipo === 'interno' ? `
+      <h3>Tiempo de relevamiento</h3>
+      <table class="breakdown-table">
+        <tbody>
+          <tr><td>Horas operativas (relevamiento)</td><td>${desglose.horasRelevamiento.toLocaleString('es-PY', { maximumFractionDigits: 1 })} horas</td></tr>
+          <tr><td>Horas de traslado</td><td>${desglose.horasTraslado.toLocaleString('es-PY', { maximumFractionDigits: 1 })} horas</td></tr>
+          <tr class="subtotal-row"><td>Horas hombre totales de campo</td><td>${desglose.horasHombreTotales.toLocaleString('es-PY', { maximumFractionDigits: 1 })} horas</td></tr>
+          <tr><td>Relevadores recomendados</td><td>${desglose.relevadoresRecomendados} persona(s)</td></tr>
+        </tbody>
+      </table>
+
       <h3>Costos internos</h3>
       <table class="breakdown-table">
         <tbody>
@@ -3032,6 +3886,15 @@ function construirHtmlPreviewAuditoria(resultado, config, numero, tipo) {
           <tr><td>Costo interno total (mano de obra, operativos, servicios)</td><td>${formatearMoneda(desglose.costoInternoTotal, config.moneda)}</td></tr>
           <tr><td>Gastos administrativos + contingencia (Gs. fijos)</td><td>${formatearMoneda(desglose.montoGastosYContingencia, config.moneda)}</td></tr>
           <tr class="subtotal-row"><td>Costo con gastos</td><td>${formatearMoneda(desglose.costoConGastos, config.moneda)}</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Precio por costos vs. precio por escala</h3>
+      <table class="breakdown-table">
+        <tbody>
+          <tr><td>Precio calculado por costos</td><td>${formatearMoneda(desglose.precioPorCostos, config.moneda)}</td></tr>
+          <tr><td>Precio de referencia por escala</td><td>${formatearMoneda(desglose.precioPorEscala, config.moneda)}</td></tr>
+          <tr class="subtotal-row"><td>Se usa el mayor de los dos</td><td>${formatearMoneda(Math.max(desglose.precioPorCostos, desglose.precioPorEscala), config.moneda)}</td></tr>
         </tbody>
       </table>
 
@@ -3051,20 +3914,21 @@ function construirHtmlPreviewAuditoria(resultado, config, numero, tipo) {
   return `
     <div class="preview-doc">
       <h2>Cotización de Servicios de Auditoría en PDV</h2>
-      <p class="muted">N° ${numero} · Fecha: ${inputs.quoteDate}${inputs.validity ? ' · Vigencia: ' + inputs.validity + ' días' : ''}</p>
+      <p class="muted">N° ${textoSeguro(numero)} · Fecha: ${textoSeguro(inputs.quoteDate)}${inputs.validity ? ' · Vigencia: ' + Number(inputs.validity) + ' días' : ''}</p>
       <hr>
       <h3>Cliente</h3>
-      <p>${inputs.clientName}${inputs.contactName ? ' — Contacto: ' + inputs.contactName : ''}</p>
-      ${inputs.projectName ? `<p>Proyecto: ${inputs.projectName}</p>` : ''}
+      <p>${textoSeguro(inputs.clientName)}${inputs.contactName ? ' — Contacto: ' + textoSeguro(inputs.contactName) : ''}</p>
+      ${inputs.projectName ? `<p>Proyecto: ${textoSeguro(inputs.projectName)}</p>` : ''}
 
       <h3>Alcance del servicio</h3>
       <table class="breakdown-table">
         <tbody>
-          <tr><td>Tipo de servicio</td><td>${SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType}</td></tr>
+          <tr><td>Tipo de servicio</td><td>${textoSeguro(SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType)}</td></tr>
           <tr><td>Cantidad de PDV</td><td>${inputs.pdvCount}</td></tr>
           <tr><td>Productos por PDV</td><td>${inputs.productsPerPdv}</td></tr>
-          <tr><td>Total de productos a auditar</td><td>${totalProductos.toLocaleString('es-PY')}</td></tr>
-          <tr><td>Zona</td><td>${zonaLabel}${inputs.department ? ' - ' + inputs.department : ''}${detalleZonaCombinada}</td></tr>
+          <tr><td>Productos únicos aproximados</td><td>${totalProductos.toLocaleString('es-PY')}</td></tr>
+          ${tipo === 'interno' ? `<tr><td>Registros totales a relevar</td><td>${resultado.registrosTotalesRelevados.toLocaleString('es-PY')}</td></tr>` : ''}
+          <tr><td>Zona</td><td>${textoSeguro(zonaLabel)}${inputs.department ? ' - ' + textoSeguro(inputs.department) : ''}${textoSeguro(detalleZonaCombinada)}</td></tr>
           <tr><td>Visitas totales</td><td>${totalVisitas}</td></tr>
           <tr><td>Duración</td><td>${inputs.durationMonths} mes(es)</td></tr>
           ${entregables.length ? `<tr><td>Entregables incluidos</td><td>${entregables.join(', ')}</td></tr>` : ''}
@@ -3142,16 +4006,16 @@ function construirHtmlPreviewMysteryShopper(resultado, config, numero, tipo) {
   return `
     <div class="preview-doc">
       <h2>Cotización de Servicios de Mystery Shopper</h2>
-      <p class="muted">N° ${numero} · Fecha: ${inputs.quoteDate}${inputs.validity ? ' · Vigencia: ' + inputs.validity + ' días' : ''}</p>
+      <p class="muted">N° ${textoSeguro(numero)} · Fecha: ${textoSeguro(inputs.quoteDate)}${inputs.validity ? ' · Vigencia: ' + Number(inputs.validity) + ' días' : ''}</p>
       <hr>
       <h3>Cliente</h3>
-      <p>${inputs.clientName}${inputs.contactName ? ' — Contacto: ' + inputs.contactName : ''}</p>
-      ${inputs.projectName ? `<p>Proyecto: ${inputs.projectName}</p>` : ''}
+      <p>${textoSeguro(inputs.clientName)}${inputs.contactName ? ' — Contacto: ' + textoSeguro(inputs.contactName) : ''}</p>
+      ${inputs.projectName ? `<p>Proyecto: ${textoSeguro(inputs.projectName)}</p>` : ''}
 
       <h3>Alcance del servicio</h3>
       <table class="breakdown-table">
         <tbody>
-          <tr><td>Tipo de servicio</td><td>${SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType}</td></tr>
+          <tr><td>Tipo de servicio</td><td>${textoSeguro(SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType)}</td></tr>
           <tr><td>Empresas a monitorear</td><td>${inputs.msAseguradorasCount || 0}</td></tr>
           <tr><td>Sucursales a visitar (presencial)</td><td>${inputs.msSucursalesPresencial || 0}</td></tr>
           <tr><td>Canales remotos por empresa</td><td>${inputs.msCanalesRemotos || 0}</td></tr>
@@ -3172,7 +4036,11 @@ function construirHtmlPreviewMysteryShopper(resultado, config, numero, tipo) {
   `;
 }
 
-function generarPdf(resultado, config, numero, tipo) {
+function generarPdf(resultado, config, numero, tipo, opciones = {}) {
+  if (tipo === 'cliente' && opciones.estado !== 'Aprobada') {
+    alert('El PDF para el cliente solo está disponible cuando la cotización fue aprobada.');
+    return;
+  }
   if (!window.jspdf) {
     alert('No se pudo cargar la librería de generación de PDF. Verifique su conexión a internet.');
     return;
@@ -3212,16 +4080,16 @@ function generarPdf(resultado, config, numero, tipo) {
   const ctx = { doc, margin, lineHeight, pageWidth, addLine, addRow, getY: () => y, setY: (v) => { y = v; } };
 
   if (esMysteryShopper(inputs)) {
-    generarCuerpoPdfMysteryShopper(ctx, resultado, config, numero, tipo);
+    generarCuerpoPdfMysteryShopper(ctx, resultado, config, numero, tipo, opciones);
   } else {
-    generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo);
+    generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo, opciones);
   }
 
   const sufijo = tipo === 'interno' ? 'interno' : 'cliente';
   doc.save(`${numero.replace(/\s.*$/, '')}-${sufijo}.pdf`);
 }
 
-function generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo) {
+function generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo, opciones = {}) {
   const { addLine, addRow, margin, pageWidth, doc } = ctx;
   const { inputs, desglose, ciclos, totalProductos, totalVisitas } = resultado;
   let y = ctx.getY();
@@ -3233,6 +4101,7 @@ function generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo) {
 
   addLine('Cotización de Servicios de Auditoría en PDV', { size: 16, bold: true, lh: 24 });
   addLine(`N° ${numero}  ·  Fecha: ${inputs.quoteDate}${inputs.validity ? '  ·  Vigencia: ' + inputs.validity + ' días' : ''}`, { size: 10, lh: 22 });
+  if (tipo === 'cliente') addLine('DOCUMENTO COMERCIAL AUTORIZADO', { size: 9, bold: true, lh: 20 });
 
   addLine('DATOS DEL CLIENTE', { bold: true, size: 12, lh: 18 });
   addRow('Cliente', inputs.clientName);
@@ -3244,13 +4113,23 @@ function generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo) {
   addRow('Tipo de servicio', SERVICE_TYPE_LABELS[inputs.serviceType] || inputs.serviceType);
   addRow('Cantidad de PDV', String(inputs.pdvCount));
   addRow('Productos por PDV', String(inputs.productsPerPdv));
-  addRow('Total de productos a auditar', totalProductos.toLocaleString('es-PY'));
+  addRow('Productos únicos aproximados', totalProductos.toLocaleString('es-PY'));
+  addRow('Registros totales a relevar', resultado.registrosTotalesRelevados.toLocaleString('es-PY'));
   addRow('Zona', zonaLabel + (inputs.department ? ' - ' + inputs.department : '') + detalleZonaCombinada);
   addRow('Visitas totales', String(totalVisitas));
   addRow('Duración', `${inputs.durationMonths} mes(es) (${ciclos} ciclos)`);
   y = ctx.getY() + 8; ctx.setY(y);
 
   if (tipo === 'interno') {
+    addLine('TIEMPO DE RELEVAMIENTO', { bold: true, size: 12, lh: 18 });
+    addRow('Horas operativas (relevamiento)', desglose.horasRelevamiento.toLocaleString('es-PY', { maximumFractionDigits: 1 }) + ' horas');
+    addRow('Horas de traslado', desglose.horasTraslado.toLocaleString('es-PY', { maximumFractionDigits: 1 }) + ' horas');
+    addRow('Horas hombre totales de campo', desglose.horasHombreTotales.toLocaleString('es-PY', { maximumFractionDigits: 1 }) + ' horas');
+    addRow('PDV por día, por relevador', String(desglose.pdvPorDiaPorPersona));
+    addRow('Jornadas necesarias con 1 persona', String(desglose.diasNecesariosConUnaPersona) + ' días');
+    addRow('Relevadores recomendados', String(desglose.relevadoresRecomendados));
+    y = ctx.getY() + 8; ctx.setY(y);
+
     addRow('Auditores requeridos', String(desglose.cantidadAuditores));
     addLine('COSTOS INTERNOS', { bold: true, size: 12, lh: 18 });
     addRow('Precio base por ciclo (escala)', formatearMoneda(desglose.precioBaseCiclo, config.moneda));
@@ -3261,6 +4140,11 @@ function generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo) {
     addRow('Gastos administrativos + contingencia (Gs. fijos)', formatearMoneda(desglose.montoGastosYContingencia, config.moneda));
     addRow('Costo con gastos', formatearMoneda(desglose.costoConGastos, config.moneda));
     y = ctx.getY() + 8; ctx.setY(y);
+
+    addLine('PRECIO POR COSTOS vs. PRECIO POR ESCALA', { bold: true, size: 12, lh: 18 });
+    addRow('Precio calculado por costos', formatearMoneda(desglose.precioPorCostos, config.moneda));
+    addRow('Precio de referencia por escala', formatearMoneda(desglose.precioPorEscala, config.moneda));
+    addRow('Se usa el MAYOR de los dos', formatearMoneda(Math.max(desglose.precioPorCostos, desglose.precioPorEscala), config.moneda));
 
     addLine('RANGO COMERCIAL Y PRECIO FINAL', { bold: true, size: 12, lh: 18 });
     addRow(`Precio mínimo (margen ${desglose.margenMinimoPercent}%)`, formatearMoneda(desglose.rangoComercial.minimo, config.moneda));
@@ -3296,13 +4180,14 @@ function generarCuerpoPdfAuditoria(ctx, resultado, config, numero, tipo) {
   agregarDisclaimerPdf(ctx, 'Cotización estimativa y sujeta a validación comercial y operativa. El precio final puede variar según el alcance definitivo, ubicación de los puntos de venta y requerimientos adicionales del cliente.');
 }
 
-function generarCuerpoPdfMysteryShopper(ctx, resultado, config, numero, tipo) {
+function generarCuerpoPdfMysteryShopper(ctx, resultado, config, numero, tipo, opciones = {}) {
   const { addLine, addRow, margin, pageWidth, doc } = ctx;
   const { inputs, desglose, totalVisitas, totalInteracciones } = resultado;
   let y;
 
   addLine('Cotización de Servicios de Mystery Shopper', { size: 16, bold: true, lh: 24 });
   addLine(`N° ${numero}  ·  Fecha: ${inputs.quoteDate}${inputs.validity ? '  ·  Vigencia: ' + inputs.validity + ' días' : ''}`, { size: 10, lh: 22 });
+  if (tipo === 'cliente') addLine('DOCUMENTO COMERCIAL AUTORIZADO', { size: 9, bold: true, lh: 20 });
 
   addLine('DATOS DEL CLIENTE', { bold: true, size: 12, lh: 18 });
   addRow('Cliente', inputs.clientName);
@@ -3389,5 +4274,15 @@ document.addEventListener('DOMContentLoaded', () => {
   initCalculoRapido();
   initConfiguracion();
   initHistorial();
+  initAutorizaciones();
+  initCambiosSolicitados();
   cambiarVista('nueva');
+});
+
+document.addEventListener('cotizador:auth-ready', async () => {
+  aplicarPermisosPorRol();
+  await sincronizarConfiguracionSupabase();
+  await sincronizarHistorialSupabase();
+  await actualizarContadorAutorizaciones();
+  await actualizarContadoresCambios();
 });

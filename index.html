@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Cotizador de Auditorías en PDV</title>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=15">
 <!-- jsPDF vía CDN, para generar cotizaciones en PDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
@@ -30,6 +31,18 @@
       </a>
       <a href="#" class="nav-link" data-view="historial">
         <span class="nav-icon">☰</span> Historial de cotizaciones
+        <span class="nav-count-badge" id="contadorCambiosHistorial" style="display:none;">0</span>
+      </a>
+      <a href="#" class="nav-link" data-view="autorizaciones" id="navAutorizaciones" style="display:none;">
+        <span class="nav-icon">✓</span> Autorizaciones
+        <span class="nav-count-badge" id="contadorAutorizaciones" style="display:none;">0</span>
+      </a>
+      <a href="#" class="nav-link" data-view="cambios" id="navCambios" style="display:none;">
+        <span class="nav-icon">↻</span> Cambios solicitados
+        <span class="nav-count-badge" id="contadorCambiosSolicitados" style="display:none;">0</span>
+      </a>
+      <a href="#" class="nav-link" data-view="resumen">
+        <span class="nav-icon">📊</span> Resumen
       </a>
       <a href="#" class="nav-link" data-view="config">
         <span class="nav-icon">⚙</span> Configuración de costos
@@ -433,6 +446,64 @@
     </section>
 
     <!-- ============ VISTA: HISTORIAL ============ -->
+    <section id="view-resumen" class="view">
+      <div class="view-header">
+        <h1>Resumen</h1>
+        <p class="muted">Indicadores comerciales actualizados con las cotizaciones disponibles en Supabase.</p>
+      </div>
+
+      <div class="result-grid">
+        <div class="stat-card"><span class="stat-label">Cotizaciones únicas</span><span class="stat-value" id="resumenCantidad">0</span></div>
+        <div class="stat-card stat-card-warning"><span class="stat-label">Pendientes de decisión</span><span class="stat-value" id="resumenPendientes">0</span></div>
+        <div class="stat-card stat-card-success"><span class="stat-label">Cotizaciones aprobadas</span><span class="stat-value" id="resumenAprobadas">0</span></div>
+        <div class="stat-card stat-card-danger"><span class="stat-label">Cotizaciones rechazadas</span><span class="stat-value" id="resumenRechazadas">0</span></div>
+        <div class="stat-card stat-card-margin"><span class="stat-label">Monto total aprobado</span><span class="stat-value" id="resumenMontoTotal">Gs. 0</span></div>
+        <div class="stat-card"><span class="stat-label">Tasa de aprobación</span><span class="stat-value" id="resumenTasaAprobacion">0%</span></div>
+        <div class="stat-card"><span class="stat-label">Ticket promedio aprobado</span><span class="stat-value" id="resumenTicketPromedio">Gs. 0</span></div>
+      </div>
+
+      <div class="result-grid">
+        <div class="card">
+          <h2>Cotizaciones creadas por responsable</h2>
+          <div id="resumenPorCreador"></div>
+        </div>
+        <div class="card">
+          <h2>Cotizaciones autorizadas por responsable</h2>
+          <div id="resumenPorAprobador"></div>
+        </div>
+      </div>
+
+      <div class="result-grid">
+        <div class="card">
+          <h2>Cotizaciones por servicio</h2>
+          <div id="resumenPorServicio"></div>
+        </div>
+        <div class="card">
+          <h2>Cotizaciones por estado</h2>
+          <div id="resumenPorEstado"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Últimas cotizaciones</h2>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>N° Cotización</th>
+                <th>Cliente</th>
+                <th>Servicio</th>
+                <th>Fecha</th>
+                <th>Total</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody id="resumenUltimasBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section id="view-historial" class="view">
       <div class="view-header">
         <h1>Historial de cotizaciones</h1>
@@ -444,10 +515,14 @@
         <select id="filtroEstado">
           <option value="">Todos los estados</option>
           <option value="Borrador">Borrador</option>
-          <option value="Enviada">Enviada</option>
+          <option value="Pendiente de aprobación">Pendiente de aprobación</option>
+          <option value="En revisión">En revisión</option>
+          <option value="Cambios solicitados">Cambios solicitados</option>
           <option value="Aprobada">Aprobada</option>
           <option value="Rechazada">Rechazada</option>
+          <option value="Enviada al cliente">Enviada al cliente</option>
           <option value="Vencida">Vencida</option>
+          <option value="Cancelada">Cancelada</option>
         </select>
         <select id="filtroZona">
           <option value="">Todas las zonas</option>
@@ -460,7 +535,7 @@
       </div>
 
       <div class="card table-wrapper">
-        <table class="data-table">
+        <table class="data-table history-table">
           <thead>
             <tr>
               <th>N° Cotización</th>
@@ -471,12 +546,48 @@
               <th>Zona</th>
               <th>Total estimado</th>
               <th>Estado</th>
+              <th>Aprobada por</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody id="tablaHistorialBody"></tbody>
         </table>
       </div>
+    </section>
+
+    <!-- ============ VISTA: AUTORIZACIONES ============ -->
+    <section id="view-autorizaciones" class="view">
+      <div class="view-header approval-header">
+        <div>
+          <h1>Autorizaciones</h1>
+          <p class="muted">Revise los costos, deje observaciones y decida cada cotización.</p>
+        </div>
+        <div class="approval-header-actions">
+          <label for="filtroPrioridadAutorizaciones" class="muted">Prioridad</label>
+          <select id="filtroPrioridadAutorizaciones" class="input-sm">
+            <option value="">Todas</option>
+            <option value="alta">🔴 Alta</option>
+            <option value="media">🟡 Media</option>
+            <option value="baja">🟢 Baja</option>
+          </select>
+          <button type="button" class="btn btn-secondary" id="btnActualizarAutorizaciones">Actualizar</button>
+        </div>
+      </div>
+      <div id="autorizacionesMensaje" class="alert alert-info" style="display:none;"></div>
+      <div id="listaAutorizaciones"></div>
+    </section>
+
+    <!-- ============ VISTA: CAMBIOS SOLICITADOS ============ -->
+    <section id="view-cambios" class="view">
+      <div class="view-header approval-header">
+        <div>
+          <h1>Cambios solicitados</h1>
+          <p class="muted">Responda las observaciones antes de recalcular y reenviar la cotización.</p>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btnActualizarCambios">Actualizar</button>
+      </div>
+      <div id="cambiosMensaje" class="alert alert-info" style="display:none;"></div>
+      <div id="listaCambios"></div>
     </section>
 
     <!-- ============ VISTA: CONFIGURACIÓN ============ -->
@@ -931,6 +1042,11 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js"></script>
+<script src="supabase-config.js"></script>
+<script src="supabase-client.js"></script>
+<script src="supabase-data.js?v=18"></script>
+<script src="auth.js"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>
